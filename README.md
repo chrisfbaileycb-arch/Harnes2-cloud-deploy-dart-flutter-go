@@ -1,209 +1,123 @@
-<h3 align="center">
-  <img src="assets/Harness2-wordmark.png" alt="Harness²" width="360"><br>
-  Recursive Agent Harnessing for an Open World
-</h3>
+# Harness² — Agent Harness Architect, Universal Platform Transpiler & Multi-Runtime Engineering Workbench
 
-<p align="center">
-  <a href="https://arxiv.org/pdf/2610.14224"><img src="https://img.shields.io/badge/Paper-arXiv-EA4335?logo=arxiv&logoColor=white" alt="Paper"></a>
-  <a href="https://harness2.github.io"><img src="https://img.shields.io/badge/Website-harness2.github.io-4285F4?logo=googlechrome&logoColor=white" alt="Website"></a>
-  <a href="docs/BENCHMARKS.md"><img src="https://img.shields.io/badge/Docs-Benchmark%20guides-FBBC04" alt="Benchmark guides"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-34A853" alt="License"></a>
-</p>
+**Harness²** has evolved from a foundational agent-harness reference paper into a full-stack **Agent Engineering, Cross-Platform Transpilation, and Managed Cloud Deployment Workbench**.
 
-<p align="center">
-  <a href="docs/BENCHMARKS.md#jobbench">
-    <img src="assets/harness2-setup.gif" alt="Install, set up, and run JobBench: uv pip install -e '.[render]', harness2-setup jb, then harness2 --bench jb --k 1 --mode parallel. Click for prerequisites and commands." width="640">
-  </a>
-</p>
+It provides interactive architecture design, deterministic surface validation, a **3-Way Agent Skill Connector** (REST API, MCP JSON-RPC 2.0, and Bring-Your-Own-Code), a **Universal Platform Transpiler** (for deploying harnesses *without* OpenCode or Codex), and step-by-step execution engines for **Firebase Genkit**, **Bazel 8/9 + Dart 3.10 / Flutter 3.38**, and **Google Cloud ADK (`agents-cli`) Managed Deployments**.
 
-A **harness** is the system around a model that enables it to act as an agent:
-prompts, tools, memory, skills, orchestration, and more. **Harnessing** is the
-process of optimizing that system.
+---
 
-Harness² is a plug-and-play framework for **recursive agent harnessing** in an
-open world, where agents encounter tasks unseen during harness design. It
-connects two levels of recursion while keeping model weights fixed:
+## Core Modules & Capabilities
 
-* **Task-level recursion** refines the execution harness for the current task
-  through a contrastive **Propose–Probe–Compose** step: propose edits, probe
-  their effects on the same task, and compose a refined harness from behavioral
-  contrasts between executions, without ground-truth feedback.
-* **Harnessing-level recursion** updates a persistent *improvement harness*
-  with adopted harnesses and evidence-supported lessons from each task to guide
-  future refinement.
+### 1. Agent Harness Architect & 6-Step Curriculum
+An interactive system that converts raw operational runbooks, shell commands, or video/transcript workflows into validated **Four-Bucket Agent Harnesses** (`Always-On`, `Skills`, `Scripts`, and `Sub-Agents`):
+- **6-Stage Setup & Training Guide**: Covers Substrate & Budget Sizing, Always-On Guardrail Split, On-Demand `SKILL.md` Packaging, Executable Zero-Context Verifiers, Isolated Sub-Agent Context Firewalls, and Recursive `Propose -> Probe -> Compose` Training Loops.
+- **Interactive Transcript-to-Harness Compiler**: Paste any sequence of workflow steps, CI/CD logs, or engineering runbooks to automatically classify steps into `Always-On` files, on-demand `skills/<id>/SKILL.md` routers, executable `scripts/*.py` verifiers, and `sub_agents/*.yaml` workers.
+- **Dart/Flutter & GCP Cloud Run Operational Curriculum**: Includes dedicated training tracks for Dart 3.10 / Flutter 3.38 development and Google Cloud managed agent operations.
 
-<p align="center">
-  <a href="assets/harness2_pipeline.png">
-    <img src="assets/harness2_pipeline.png" alt="Harness² pipeline. Task-level recursion: an agent executor runs the initial harness, a harness editor proposes invariant and domain edits, candidate probes execute them, and a harness composer combines them into the final harness. Harnessing-level recursion: an experience reflector reflects on the step and updates the improvement harness used for the next task." width="100%">
-  </a>
-</p>
+### 2. Universal Cross-Platform Deployment (No OpenCode / Codex Required)
+Deploy and execute any `harness2.v1` configuration in **any agent runtime**—even when you do not use OpenCode (`oc`) or Codex (`cx`):
+- **Step-by-Step Operational & Portable Execution Playbook**: Detailed instructions for how to execute and deploy all 6 harness steps effectively across any runtime.
+- **Live Universal Platform Transpiler**: Converts the active `editorTree` into downloadable, ready-to-run code bundles for 6 target platforms:
+  1. **Standalone Python / TypeScript SDK Loop** (`@google/genai`, OpenAI, or Anthropic SDKs with native function-calling tools `load_skill`, `run_verifier_script`, and `delegate_sub_agent`).
+  2. **Google Cloud ADK (`LlmAgent`) & Vertex AI Agent Engine / Cloud Run** (`agent.py` + `agents.yaml`).
+  3. **Firebase Genkit (`ai.defineFlow` + `ai.defineTool`)** (`genkit_harness_agent.ts` with typed Zod tool schemas).
+  4. **LangGraph / CrewAI / AutoGen StateGraph** (`langgraph_harness.py` with stateful verification gates).
+  5. **Claude Code / Cursor / Windsurf IDE Native Rules** (`CLAUDE.md`, `.cursor/rules/*.mdc`, and `.claude/commands/*.md`).
+  6. **Universal HTTP / A2A + MCP Container** (`Dockerfile` + `a2a_agent_card.json` for Kubernetes, Cloud Run, AWS ECS, or Fly.io).
 
-Across three professional benchmarks and four model–harness configurations, a
-single Harness² step improves GLM-5 and Gemini 3.5 Flash over their base
-harnesses, with gains of up to 11.5 points on WorkBuddy-Bench, 4.5 points on
-JobBench, and 11.8 percentage points on LAB's partial pass rate. Increasing the
-task-level recursion budget brings further gains.
+### 3. Harness Configuration Registry & `harness2.v1` Importer
+- **Pre-Loaded `harness-configuration-oc_46a97fbf.json`**: Ships with the canonical OpenCode (`oc`) 9-file harness configuration (`1,410 / 24,000` always-on characters) mounted at `/assets/aistudio/harness-configuration-oc_46a97fbf.json`.
+- **Upload, Paste, Validate & Export**: Upload `.json` configuration files, paste raw `harness2.v1` JSON for live schema and surface-budget census validation, switch between saved configuration profiles, or click **Download Harness Configuration** to export the current editor tree state.
 
-The release supports **parallel and sequential recursion**, **OpenCode and
-Codex executors**, and **JobBench, LAB, and WorkBuddy-Bench**.
+### 4. 3-Way Agent Skill Connector (BYOC · MCP · REST API)
+Connect external agents or front-end workflows directly to all registered skills (`skill-genkit`, `bazel_polyglot_build`, `bazel_dart_flutter_sdk`, `google_agents_cli_deploy`, and active custom harness skills):
+- **Frontend Bring-Your-Own-Code (BYOC) Sandbox**: Write or customize TypeScript/JavaScript (`async function runAgent(input, ctx)`), Dart, or Python handler templates with live access to `ctx.skills`, `ctx.runVerifier()`, `ctx.validateHarness()`, and `ctx.checkCloudSizing()`.
+- **Model Context Protocol (MCP) JSON-RPC 2.0 Server (`/api/mcp/rpc`)**: Interactive MCP inspector and live JSON-RPC 2.0 endpoint supporting `initialize`, `tools/list`, `tools/call`, `resources/list`, and `resources/read` (`harness://skills/<id>`).
+- **REST API Skill Bridge (`/api/agent-connector/*`)**: Query `GET /api/agent-connector/skills`, inspect individual skill bundles via `GET /api/agent-connector/skills/:skillId`, and execute skills or verifiers via `POST /api/agent-connector/execute`.
 
-## Video overview
+### 5. Google Cloud Deployment Agent (`chrisfbaileycb-arch/agents-cli`)
+Complete instruction manual, deployment control plane, and runtime health analyzer for Google Cloud ADK (`agents-cli`):
+- **8-Skill Suite**: Covers ADK Scaffolding (`agents-cli init`), Declarative `agents.yaml` Manifests, Managed Vertex AI Agent Engine Deployment, Cloud Run Containerization + IAP, Cloud Trace / OpenTelemetry + Cloud Logging Alerting, Cloud Run Sizing & Concurrency Calculator, `agents-cli eval` CI/CD Evaluation Gates, and Safe Traffic Rollbacks.
+- **Interactive Sizing & Health Calculator**: Real-time diagnostics for CPU/Memory OOM prevention, cold-start latency, concurrency tuning, and minimum instance sizing.
 
-https://github.com/user-attachments/assets/76b10548-b14b-4c8f-9aa5-a93662df4d56
+### 6. Bazel 8/9 Coding Skill + Dart 3.10 & Flutter 3.38 SDK Deployments
+Step-by-step workspace analyzer and execution manual based on `chrisfbaileycb-arch/bazel`:
+- **Polyglot `MODULE.bazel` & Hermetic Build Diagnostics**: Detects legacy `WORKSPACE` anti-patterns, `glob(["**"])` skyframe invalidations, non-hermetic network/PATH leaks, and missing remote cache flags.
+- **Dart 3.10 & Flutter 3.38 Hermetic Rules**: Covers `dart_binary` AOT native compilation, `dart_test` shard orchestration, `flutter_application` Web/Wasm CanvasKit bundles, Android `.aab`, iOS `.ipa`, and `dart_mcp_server` binary releases.
 
-## Contents
+### 7. Firebase Genkit Multi-Language Skill Manual (`chrisfbaileycb-arch/skill-genkit`)
+Complete step-by-step implementation guide across **JavaScript/TypeScript**, **Go**, **Python**, and **Dart**:
+- Strongly typed `ai.defineFlow` and `ai.defineTool` implementations, Zod/JSON-Schema validation, multi-agent `definePrompt` handoffs, Genkit Developer UI (`genkit start -- <cmd>`), and production deployment to Cloud Run and Firebase App Hosting.
 
-- [Video overview](#video-overview)
-- [Harness components](#harness-components)
-- [Install](#install)
-- [Run a benchmark](#run-a-benchmark)
-- [Experiments](#experiments)
-- [Web access](#web-access)
-- [Results and resume](#results-and-resume)
-- [Citation](#citation)
-- [Contributing](#contributing)
-- [License](#license)
-- [Disclaimer](#disclaimer)
+### 8. Interactive Surface Validator & Recursive Training Simulator
+- **OpenCode (`oc`) & Codex (`cx`) Surface Validator**: Real-time character budget enforcement (`24,000` chars on `oc`; `32,768` bytes on `cx`), YAML frontmatter validation (`name` + `description` only), and zero-context script decoupling checks.
+- **Recursive Training Loop Simulator**: Interactive visualizations of `Propose -> Probe -> Compose` across Parallel (`par`) and Sequential (`seq`) recursion modes (`k=0..3`), plus the complete paper reader with audio narration and architecture plates.
 
-## Harness components
+---
 
-Harness² exposes eight editable components around the model: **system prompt,
-guardrails, memory, tool guidance, subagents, skills, scripts, and plugins**.
-They control context construction, the tool interface, delegation, and behavior
-inside the tool loop.
+## API & Protocol Endpoints
 
-<p align="center">
-  <a href="assets/components.png">
-    <img src="assets/components.png" alt="Eight harness components grouped by runtime role: system prompt, guardrails, memory, and skills construct context; tool guidance and scripts define the tool interface; subagents orchestrate delegated work; plugins control middleware." width="100%">
-  </a>
-</p>
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/api/health` | `GET` | Health check and active harness engine status |
+| `/api/validate` | `POST` | Validates a file tree against `oc` or `cx` surface constraints |
+| `/api/harness-configurations` | `GET` | Lists registered `harness2.v1` configurations (including `harness-configuration-oc_46a97fbf.json`) |
+| `/api/harness-configurations/import` | `POST` | Validates and registers a `harness2.v1` JSON payload |
+| `/api/agent-connector/skills` | `GET` | Returns the catalog of all registered agent skills (filterable by `domain` or `query`) |
+| `/api/agent-connector/skills/:skillId` | `GET` | Returns the full `SKILL.md`, verifier script, and metadata for a skill |
+| `/api/agent-connector/execute` | `POST` | Executes a skill lookup, verifier dry-run, or BYOC context inspection |
+| `/api/mcp/rpc` | `POST` | Model Context Protocol (MCP) JSON-RPC 2.0 endpoint (`initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`) |
+| `/assets/aistudio/harness-configuration-oc_46a97fbf.json` | `GET` | Static asset serving the default OpenCode `harness2.v1` configuration |
 
-## Install
+---
 
-Use **Linux, Python 3.12, and [uv](https://docs.astral.sh/uv/getting-started/installation/)**.
-From the repository root:
+## Local Development & Build
 
+### Prerequisites
+- Node.js 20+ and npm
+
+### Run the Full-Stack Workbench
 ```bash
-uv venv --python 3.12 .venv
-source .venv/bin/activate
-uv pip install -e '.[render]'
-harness2-demo --output runs/demo --k 2
+# Install dependencies
+npm install
+
+# Start the Express + Vite full-stack server on http://localhost:3000
+npm run dev
 ```
 
-The local demo runs both recursion modes with deterministic editors and real
-Python executions. It requires no model credentials.
-
-For model-backed benchmarks, install **Node.js 20+, the Google Cloud CLI**, and
-the [benchmark dependencies](docs/SETUP.md#requirements). LAB needs Pandoc and
-Poppler; WorkBuddy-Bench needs Docker. Then configure your models:
-
+### Typecheck & Build for Production
 ```bash
-cp .env.example .env
-# Edit .env with your Vertex AI project and model IDs.
-gcloud auth application-default login
+# Run TypeScript compiler verification
+npm run lint
+
+# Build the production client bundle
+npm run build
+
+# Start the production server
+npm start
 ```
 
-See the [setup guide](docs/SETUP.md) for model settings, authentication
-alternatives, and the [Codex executor](docs/SETUP.md#codex-executor).
+---
 
-## Run a benchmark
+## Repository Structure
 
-The following example installs LAB and runs one task, then evaluates and reports
-its result. Model-backed runs incur API costs; start with a small task selection.
-
-```bash
-harness2-setup lab
-harness2-check --bench lab
-harness2 --bench lab --k 1 --mode parallel \
-  --only-domains antitrust-competition --max-tasks 1
-harness2-judge --bench lab --k 1 --mode parallel
-harness2-report --bench lab --k 1 --mode parallel
+```text
+├── public/
+│   └── assets/aistudio/
+│       └── harness-configuration-oc_46a97fbf.json  # Default harness2.v1 configuration
+├── src/
+│   ├── core/
+│   │   ├── harnessEngine.ts                # Surface Validator (oc / cx) & recursive simulator
+│   │   ├── harnessArchitectManual.ts       # 6-stage Harness Architect & transcript compiler
+│   │   ├── harnessConfigurationManager.ts  # harness2.v1 schema parser, validator & profiles
+│   │   ├── universalPlatformAdapter.ts     # 6-step playbook & cross-platform transpiler
+│   │   ├── agentSkillConnector.ts          # REST API, MCP JSON-RPC 2.0 & BYOC sandbox engine
+│   │   ├── gcpAgentsCliManual.ts           # Google Cloud ADK (agents-cli) manual & sizing engine
+│   │   ├── bazelSkillManual.ts             # Bazel 8/9 + Dart/Flutter SDK skill & analyzer
+│   │   ├── genkitManual.ts                 # Multi-language Firebase Genkit manual (TS/Go/Py/Dart)
+│   │   └── paperData.ts                    # Harness² paper sections, benchmark metrics & glossary
+│   ├── App.tsx                             # Unified multi-module workbench UI
+│   └── main.tsx                            # React entry point
+├── server.ts                               # Express API server (Validator, Configs, REST & MCP)
+└── package.json
 ```
-
-Sequential recursion runs the same commands with `--mode sequential`. `--k` is
-the task-level recursion budget; see [Experiments](#experiments). Judging and
-reporting must use the same benchmark, executor, subset, `--k`, `--mode`, and
-seed as the refinement run. Add `--dry-run` to `harness2` to preview task
-selection without model calls.
-
-| Benchmark | Tasks | Install | Guide |
-|---|---|---|---|
-| JobBench | Professional work | `harness2-setup jb` | [JobBench](docs/BENCHMARKS.md#jobbench) |
-| LAB | Legal work | `harness2-setup lab` | [LAB](docs/BENCHMARKS.md#lab) |
-| WorkBuddy-Bench | Office, web, and code | `harness2-setup wb` | [WorkBuddy](docs/BENCHMARKS.md#workbuddy-bench) |
-
-Choose one benchmark per command. WorkBuddy also takes `--subset office`,
-`--subset web`, or `--subset code` on every command after setup. The
-[benchmark guides](docs/BENCHMARKS.md) cover each one's data, domains, and
-grading.
-
-## Experiments
-
-Scale task-level recursion in two ways: **parallel recursion** explores multiple
-candidate harnesses and composes refinements from their execution evidence;
-**sequential recursion** carries the refined harness and accumulated evidence
-through successive Propose–Probe–Compose steps.
-
-<p align="center">
-  <a href="assets/harness2_recursion_modes.png">
-    <img src="assets/harness2_recursion_modes.png" alt="Two ways to scale task-level recursion. Parallel: probe k general and k domain-specific candidate harnesses, then produce k compositions from the shared evidence. Sequential: carry the refined harness and accumulated evidence through k Propose–Probe–Compose steps." width="100%">
-  </a>
-</p>
-<p align="center"><em>Parallel recursion explores wider; sequential recursion refines deeper.</em></p>
-
-| Option | Behavior |
-|---|---|
-| `--k 1` | One Propose–Probe–Compose step |
-| `--k K --mode parallel` | Probe `K` general and `K` domain-specific candidates, then produce `K` compositions |
-| `--k K --mode sequential` | Refine the harness through `K` successive steps |
-| `--substrate cx` | Use Codex instead of the default OpenCode executor |
-
-After each task, harnessing-level recursion retains the adopted harness and
-evidence-supported lessons to guide future refinement. See the
-[experiment guide](docs/EXPERIMENTS.md) for task selection, concurrency,
-reproducibility, and baseline comparisons.
-
-## Web access
-
-Executor network access is unrestricted, and Codex runs with its sandbox
-disabled. Public benchmark rubrics may be accessible online. Before evaluation,
-configure [network restrictions](docs/EXPERIMENTS.md#web-access) to prevent
-access to benchmark answers and grading criteria.
-
-## Results and resume
-
-Results are saved under `runs/`, organized by benchmark and subset where
-applicable. They include task summaries, deliverables, adopted harnesses,
-reflection notes, and evaluation results.
-
-Repeat the same command to resume. Use a new `HARNESS2_RUNS_DIR` when changing
-models or task selection. See [results and resume](docs/EXPERIMENTS.md#results-and-resume)
-for details; each command also supports `--help`.
-
-## Citation
-
-```bibtex
-@article{xu2026harness2,
-  title   = {Harness$^2$: Recursive Agent Harnessing for an Open World},
-  author  = {Xu, Ruiyao and Chen, Yanfei and CuiZhu, Zhongying and Dalvi Mishra, Bhavana and Ming, Yifei and Yu, Han and Han, Rujun and Lee, Chen-Yu and Pfister, Tomas},
-  journal = {arXiv preprint arXiv:2610.14224},
-  year    = {2026},
-  url     = {https://arxiv.org/abs/2610.14224}
-}
-```
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## License
-
-Harness² is licensed under [Apache 2.0](LICENSE). Third-party code under
-[`third_party/`](third_party/README.md), benchmarks, and datasets retain their
-upstream licenses; see
-[third-party notices](dependencies/README.md).
-
-## Disclaimer
-
-This is not an officially supported Google product. This project is not eligible
-for the [Google Open Source Software Vulnerability Rewards Program](https://bughunters.google.com/open-source-security).

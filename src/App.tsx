@@ -64,6 +64,26 @@ import {
   synthesizeHarnessFromInput,
   WORKFLOW_EXECUTION_MASTER_GUIDE,
 } from './core/harnessArchitectAgent';
+import {
+  BYOC_PRESET_TEMPLATES,
+  ByocExecutionResult,
+  executeByocWithSkills,
+  getRegisteredSkillsCatalog,
+  handleMcpJsonRpc,
+} from './core/agentSkillConnector';
+import {
+  ATTACHED_HARNESS_CONFIG_ASSET_PATH,
+  ATTACHED_OC_HARNESS_CONFIGURATION,
+  HarnessConfigurationProfile,
+  INITIAL_HARNESS_CONFIGURATION_PROFILES,
+  parseAndValidateHarnessConfigJson,
+} from './core/harnessConfigurationManager';
+import {
+  STEP_BY_STEP_EFFECTIVE_PLAYBOOK,
+  transpileHarnessToPlatform,
+  UNIVERSAL_PLATFORMS,
+  UniversalPlatformId,
+} from './core/universalPlatformAdapter';
 
 type ActiveTab =
   | 'architect'
@@ -78,6 +98,11 @@ type ActiveTab =
 const DART_MCP_JSON = JSON.stringify(DEFAULT_MCP_CONFIG, null, 2);
 
 const PRESET_TREES: Record<string, { label: string; substrate: 'oc' | 'cx'; tree: Tree }> = {
+  oc_attached_config: {
+    label: 'Attached — harness-configuration-oc_46a97fbf.json (oc · 9 files · 2 skills)',
+    substrate: ATTACHED_OC_HARNESS_CONFIGURATION.substrate,
+    tree: ATTACHED_OC_HARNESS_CONFIGURATION.editorTree,
+  },
   oc_architect_synthesized: {
     label: 'OpenCode — Video/SOP Synthesized Harness + Training & Support',
     substrate: 'oc',
@@ -190,8 +215,18 @@ export default function App() {
   );
   const [archSubstrate, setArchSubstrate] = useState<'oc' | 'cx'>('oc');
   const [archSection, setArchSection] = useState<
-    'ingest' | 'curriculum' | 'harness-files' | 'training-support'
-  >('ingest');
+    | 'ingest'
+    | 'curriculum'
+    | 'harness-files'
+    | 'training-support'
+    | 'connect'
+    | 'universal-deploy'
+  >('universal-deploy');
+  const [targetPlatformId, setTargetPlatformId] =
+    useState<UniversalPlatformId>('standalone_sdk');
+  const [selectedTranspiledFile, setSelectedTranspiledFile] = useState<string>(
+    'universal_harness_runner.py'
+  );
   const [archResult, setArchResult] = useState<HarnessArchitectSynthesisResult>(() =>
     synthesizeHarnessFromInput({
       title: ARCHITECT_INPUT_PRESETS[0].label,
@@ -205,6 +240,60 @@ export default function App() {
   const [uploadedVideoName, setUploadedVideoName] = useState<string>('/assets/harness2-video.mp4');
   const [uploadedVideoBase64, setUploadedVideoBase64] = useState<string>('');
   const [uploadedVideoMime, setUploadedVideoMime] = useState<string>('video/mp4');
+
+  // 3-Way Agent Connector State (BYOC Sandbox · MCP JSON-RPC · REST API)
+  const [connectorMode, setConnectorMode] = useState<'byoc' | 'mcp' | 'rest'>('byoc');
+  const [byocPresetId, setByocPresetId] = useState<string>(BYOC_PRESET_TEMPLATES[0].id);
+  const [byocLanguage, setByocLanguage] = useState<'typescript' | 'dart' | 'python'>(
+    BYOC_PRESET_TEMPLATES[0].language
+  );
+  const [byocCode, setByocCode] = useState<string>(BYOC_PRESET_TEMPLATES[0].code);
+  const [byocInputJson, setByocInputJson] = useState<string>(
+    BYOC_PRESET_TEMPLATES[0].sampleInputJson
+  );
+  const [byocBoundSkills, setByocBoundSkills] = useState<string[]>(
+    BYOC_PRESET_TEMPLATES[0].defaultSkills
+  );
+  const [byocTargetPath, setByocTargetPath] = useState<string>(
+    BYOC_PRESET_TEMPLATES[0].targetHarnessPath
+  );
+  const [byocResult, setByocResult] = useState<ByocExecutionResult>(() =>
+    executeByocWithSkills({
+      code: BYOC_PRESET_TEMPLATES[0].code,
+      language: BYOC_PRESET_TEMPLATES[0].language,
+      inputJson: BYOC_PRESET_TEMPLATES[0].sampleInputJson,
+      skillIds: BYOC_PRESET_TEMPLATES[0].defaultSkills,
+      targetHarnessPath: BYOC_PRESET_TEMPLATES[0].targetHarnessPath,
+    })
+  );
+  const [isRunningByoc, setIsRunningByoc] = useState<boolean>(false);
+  const [byocMountNotice, setByocMountNotice] = useState<string>('');
+  const [selectedApiSkillId, setSelectedApiSkillId] = useState<string>('developing_bazel');
+  const [mcpRpcPreset, setMcpRpcPreset] = useState<string>('tools/list');
+  const [mcpRpcRequestText, setMcpRpcRequestText] = useState<string>(() =>
+    JSON.stringify(
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/list',
+        params: {},
+      },
+      null,
+      2
+    )
+  );
+  const [mcpRpcResponseText, setMcpRpcResponseText] = useState<string>(() =>
+    JSON.stringify(
+      handleMcpJsonRpc({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/list',
+        params: {},
+      }),
+      null,
+      2
+    )
+  );
 
   // Google Cloud Deployment Agent (agents-cli) State
   const [gcpSection, setGcSection] = useState<'monitor' | 'steps' | 'skills'>('monitor');
@@ -261,19 +350,42 @@ export default function App() {
   const [newTaskId, setNewTaskId] = useState<string>('ledger-3');
   const [newTaskAmounts, setNewTaskAmounts] = useState<string>('240.00, -85.50, 19.75, -14.25');
 
-  // Surface Editor State
-  const [substrate, setSubstrate] = useState<'oc' | 'cx'>('oc');
-  const [editorTree, setEditorTree] = useState<Tree>(PRESET_TREES.oc_architect_synthesized.tree);
+  // Surface Editor & Attached Harness Configuration (harness2.v1) State
+  const [substrate, setSubstrate] = useState<'oc' | 'cx'>(
+    ATTACHED_OC_HARNESS_CONFIGURATION.substrate
+  );
+  const [editorTree, setEditorTree] = useState<Tree>(
+    ATTACHED_OC_HARNESS_CONFIGURATION.editorTree
+  );
   const [selectedFile, setSelectedFile] = useState<string>('systemprompt.md');
   const [newFilePath, setNewFilePath] = useState<string>('');
   const [census, setCensus] = useState<ValidationCensus>(() =>
-    validateTree(OPENCODE_SURFACE, PRESET_TREES.oc_architect_synthesized.tree)
+    validateTree(OPENCODE_SURFACE, ATTACHED_OC_HARNESS_CONFIGURATION.editorTree)
   );
+  const [harnessProfiles, setHarnessProfiles] = useState<HarnessConfigurationProfile[]>(
+    INITIAL_HARNESS_CONFIGURATION_PROFILES
+  );
+  const [activeHarnessProfileId, setActiveHarnessProfileId] = useState<string>(
+    INITIAL_HARNESS_CONFIGURATION_PROFILES[0].id
+  );
+  const [showHarnessConfigDrawer, setShowHarnessConfigDrawer] = useState<boolean>(false);
+  const [harnessConfigInputName, setHarnessConfigInputName] = useState<string>(
+    'harness-configuration-oc_46a97fbf.json'
+  );
+  const [harnessConfigRawJson, setHarnessConfigRawJson] = useState<string>(() =>
+    JSON.stringify(ATTACHED_OC_HARNESS_CONFIGURATION, null, 2)
+  );
+  const [harnessConfigStatus, setHarnessConfigStatus] = useState<string>(
+    'Loaded attached harness-configuration-oc_46a97fbf.json (oc · 9 files · 1,410 / 24,000 always-on chars)'
+  );
+  const [harnessConfigError, setHarnessConfigError] = useState<string>('');
 
   // MCP Server Configurator State
-  const [mcpJsonText, setMcpJsonText] = useState<string>(DART_MCP_JSON);
+  const [mcpJsonText, setMcpJsonText] = useState<string>(
+    ATTACHED_OC_HARNESS_CONFIGURATION.editorTree['mcp.json'] ?? DART_MCP_JSON
+  );
   const [mcpErrors, setMcpErrors] = useState<string[]>([]);
-  const [mcpServerNames, setMcpServerNames] = useState<string[]>(['dart']);
+  const [mcpServerNames, setMcpServerNames] = useState<string[]>(['dart', 'genkit']);
   const [mcpSaveStatus, setMcpSaveStatus] = useState<string>('');
   const [newMcpName, setNewMcpName] = useState<string>('');
   const [newMcpCommand, setNewMcpCommand] = useState<string>('');
@@ -293,6 +405,9 @@ export default function App() {
         if (data?.latestRun) setSweepResult(data.latestRun);
         if (data?.tasks) setTasks(data.tasks);
         if (data?.gcpDeployments) setGcpDeployments(data.gcpDeployments);
+        if (Array.isArray(data?.harnessProfiles) && data.harnessProfiles.length > 0) {
+          setHarnessProfiles(data.harnessProfiles);
+        }
         if (data?.mcpConfig) {
           const formatted = JSON.stringify(data.mcpConfig, null, 2);
           setMcpJsonText(formatted);
@@ -300,6 +415,25 @@ export default function App() {
       })
       .catch(() => {
         // Fallback to local deterministic state
+      });
+
+    // Reference and verify the attached configuration asset at /assets/aistudio/harness-configuration-oc_46a97fbf.json
+    fetch(ATTACHED_HARNESS_CONFIG_ASSET_PATH)
+      .then((r) => (r.ok ? r.text() : null))
+      .then((rawText) => {
+        if (!rawText) return;
+        const parsed = parseAndValidateHarnessConfigJson(rawText, 'oc');
+        if (parsed.ok && parsed.config) {
+          setSubstrate(parsed.config.substrate);
+          setEditorTree(parsed.config.editorTree);
+          setHarnessConfigRawJson(JSON.stringify(parsed.config, null, 2));
+          if (typeof parsed.config.editorTree['mcp.json'] === 'string') {
+            setMcpJsonText(parsed.config.editorTree['mcp.json']);
+          }
+        }
+      })
+      .catch(() => {
+        // Already pre-seeded with ATTACHED_OC_HARNESS_CONFIGURATION
       });
   }, []);
 
@@ -797,6 +931,308 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
+  const activeHarnessProfile =
+    harnessProfiles.find((p) => p.id === activeHarnessProfileId) ?? harnessProfiles[0];
+
+  const handleSelectHarnessProfile = (profileId: string) => {
+    const found = harnessProfiles.find((p) => p.id === profileId);
+    if (!found) return;
+    setActiveHarnessProfileId(found.id);
+    setSubstrate(found.config.substrate);
+    setEditorTree({ ...found.config.editorTree });
+    const firstFile = Object.keys(found.config.editorTree)[0] ?? 'systemprompt.md';
+    setSelectedFile(firstFile);
+    setHarnessConfigInputName(found.name);
+    setHarnessConfigRawJson(JSON.stringify(found.config, null, 2));
+    if (typeof found.config.editorTree['mcp.json'] === 'string') {
+      setMcpJsonText(found.config.editorTree['mcp.json']);
+    }
+    setHarnessConfigError('');
+    setHarnessConfigStatus(
+      `Activated ${found.name} (${found.config.substrate.toUpperCase()} · ${Object.keys(found.config.editorTree).length} files · ${found.config.validationCensus.alwaysOnChars.toLocaleString()} chars)`
+    );
+  };
+
+  const handleImportHarnessConfigJson = async (rawJsonStr: string, fileName?: string) => {
+    const targetName = (fileName || harnessConfigInputName || 'custom-harness-config.json').trim();
+    const parsed = parseAndValidateHarnessConfigJson(rawJsonStr, substrate);
+    if (!parsed.ok || !parsed.config) {
+      setHarnessConfigError(parsed.error ?? 'Failed to parse harness configuration JSON');
+      return;
+    }
+
+    setHarnessConfigError('');
+    setSubstrate(parsed.config.substrate);
+    setEditorTree({ ...parsed.config.editorTree });
+    const firstFile = Object.keys(parsed.config.editorTree)[0] ?? 'systemprompt.md';
+    setSelectedFile(firstFile);
+    setHarnessConfigInputName(targetName);
+    setHarnessConfigRawJson(JSON.stringify(parsed.config, null, 2));
+    if (typeof parsed.config.editorTree['mcp.json'] === 'string') {
+      setMcpJsonText(parsed.config.editorTree['mcp.json']);
+    }
+
+    try {
+      const res = await fetch('/api/harness-configurations/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: targetName,
+          rawJson: rawJsonStr,
+          substrate: parsed.config.substrate,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.profiles)) {
+          setHarnessProfiles(data.profiles);
+        }
+        if (data.activeProfileId) {
+          setActiveHarnessProfileId(data.activeProfileId);
+        }
+      } else {
+        const localProfile: HarnessConfigurationProfile = {
+          id: `cfg-${Date.now()}`,
+          name: targetName,
+          badge: `${parsed.config.substrate.toUpperCase()} · ${parsed.config.validationCensus.nFiles} files`,
+          config: parsed.config,
+        };
+        setHarnessProfiles((prev) => [localProfile, ...prev]);
+        setActiveHarnessProfileId(localProfile.id);
+      }
+    } catch {
+      const localProfile: HarnessConfigurationProfile = {
+        id: `cfg-${Date.now()}`,
+        name: targetName,
+        badge: `${parsed.config.substrate.toUpperCase()} · ${parsed.config.validationCensus.nFiles} files`,
+        config: parsed.config,
+      };
+      setHarnessProfiles((prev) => [localProfile, ...prev]);
+      setActiveHarnessProfileId(localProfile.id);
+    }
+
+    setHarnessConfigStatus(
+      `Imported & mounted ${targetName} (${parsed.config.substrate.toUpperCase()} · ${parsed.config.validationCensus.nFiles} files · ${parsed.config.validationCensus.skills} skills · MCP: ${parsed.config.validationCensus.mcpServers.join(', ') || 'none'})`
+    );
+  };
+
+  const handleUploadHarnessConfigFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result ?? '');
+      handleImportHarnessConfigJson(text, file.name);
+    };
+    reader.readAsText(file);
+  };
+
+  const transpiledBundle = transpileHarnessToPlatform(editorTree, targetPlatformId);
+  const transpiledFileKeys = Object.keys(transpiledBundle.generatedFiles);
+  const activeTranspiledFile =
+    transpiledBundle.generatedFiles[selectedTranspiledFile] !== undefined
+      ? selectedTranspiledFile
+      : (transpiledFileKeys[0] ?? '');
+
+  const handleSelectTargetPlatform = (pid: UniversalPlatformId) => {
+    setTargetPlatformId(pid);
+    const nextBundle = transpileHarnessToPlatform(editorTree, pid);
+    const firstKey = Object.keys(nextBundle.generatedFiles)[0] ?? '';
+    setSelectedTranspiledFile(firstKey);
+  };
+
+  const handleDownloadTranspiledBundle = () => {
+    const jsonString = JSON.stringify(transpiledBundle, null, 2);
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `harness2-${targetPlatformId}-bundle.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+  };
+
+  const skillsCatalog = getRegisteredSkillsCatalog(editorTree);
+  const selectedApiSkill =
+    skillsCatalog.find((s) => s.id === selectedApiSkillId) ?? skillsCatalog[0];
+
+  const handleSelectByocPreset = (presetId: string) => {
+    const preset =
+      BYOC_PRESET_TEMPLATES.find((p) => p.id === presetId) ?? BYOC_PRESET_TEMPLATES[0];
+    setByocPresetId(preset.id);
+    setByocLanguage(preset.language);
+    setByocCode(preset.code);
+    setByocInputJson(preset.sampleInputJson);
+    setByocBoundSkills(preset.defaultSkills);
+    setByocTargetPath(preset.targetHarnessPath);
+    const nextRes = executeByocWithSkills({
+      code: preset.code,
+      language: preset.language,
+      inputJson: preset.sampleInputJson,
+      skillIds: preset.defaultSkills,
+      targetHarnessPath: preset.targetHarnessPath,
+      customTree: editorTree,
+    });
+    setByocResult(nextRes);
+  };
+
+  const handleToggleByocSkill = (skillId: string) => {
+    setByocBoundSkills((prev) =>
+      prev.includes(skillId) ? prev.filter((id) => id !== skillId) : [...prev, skillId]
+    );
+  };
+
+  const handleRunByocExecution = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setIsRunningByoc(true);
+    try {
+      const res = await fetch('/api/agent-connector/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          language: byocLanguage,
+          code: byocCode,
+          inputJson: byocInputJson,
+          skillIds: byocBoundSkills,
+          targetHarnessPath: byocTargetPath,
+        }),
+      });
+      if (res.ok) {
+        const data: ByocExecutionResult = await res.json();
+        setByocResult(data);
+        return;
+      }
+    } catch {
+      // Fallback to local execution
+    } finally {
+      setIsRunningByoc(false);
+    }
+
+    const localRes = executeByocWithSkills({
+      code: byocCode,
+      language: byocLanguage,
+      inputJson: byocInputJson,
+      skillIds: byocBoundSkills,
+      targetHarnessPath: byocTargetPath,
+      customTree: editorTree,
+    });
+    setByocResult(localRes);
+  };
+
+  const handleMountByocIntoHarness = () => {
+    const cleanPath = byocTargetPath.trim() || 'plugin/byoc_agent_handler.ts';
+    const selectedSkillObjs = skillsCatalog.filter((s) => byocBoundSkills.includes(s.id));
+    setEditorTree((prev) => {
+      const next: Tree = { ...prev, [cleanPath]: byocCode };
+      for (const sk of selectedSkillObjs) {
+        next[sk.skillPath] = sk.skillMarkdown;
+        const curGuardrails = next['guardrails.md'] ?? '';
+        if (!curGuardrails.includes(sk.id)) {
+          next['guardrails.md'] = `${curGuardrails.trim()}\n${sk.triggerLine}\n`.trimStart();
+        }
+      }
+      return next;
+    });
+    setSelectedFile(cleanPath);
+    setByocMountNotice(
+      `Mounted ${cleanPath} + ${selectedSkillObjs.length} bound skill(s) into active Harness Tree`
+    );
+    setTimeout(() => setByocMountNotice(''), 3500);
+  };
+
+  const handleSelectMcpRpcPreset = (presetKey: string) => {
+    setMcpRpcPreset(presetKey);
+    let payload: Record<string, unknown> = {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/list',
+      params: {},
+    };
+    if (presetKey === 'initialize') {
+      payload = {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { clientInfo: { name: 'custom-agent-client', version: '1.0.0' } },
+      };
+    } else if (presetKey === 'call_load_skill') {
+      payload = {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: {
+          name: 'load_harness_skill',
+          arguments: { skillId: selectedApiSkillId || 'developing_bazel' },
+        },
+      };
+    } else if (presetKey === 'call_gcp_sizing') {
+      payload = {
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'tools/call',
+        params: {
+          name: 'check_gcp_agent_sizing',
+          arguments: { memoryGi: 4, concurrency: 8 },
+        },
+      };
+    } else if (presetKey === 'call_byoc') {
+      payload = {
+        jsonrpc: '2.0',
+        id: 4,
+        method: 'tools/call',
+        params: {
+          name: 'run_byoc_sandbox',
+          arguments: {
+            language: 'typescript',
+            code: 'return { reconciled: context.helpers.sumSignedLedger(input.amounts), skills: context.skills.map(s => s.id) };',
+            inputJson: JSON.stringify({ amounts: [150.25, -40.0, 14.75] }),
+            skillIds: ['developing_bazel', 'google_agents_cli_deploy'],
+          },
+        },
+      };
+    } else if (presetKey === 'resources/list') {
+      payload = {
+        jsonrpc: '2.0',
+        id: 5,
+        method: 'resources/list',
+        params: {},
+      };
+    }
+    const reqStr = JSON.stringify(payload, null, 2);
+    setMcpRpcRequestText(reqStr);
+    setMcpRpcResponseText(JSON.stringify(handleMcpJsonRpc(payload, editorTree), null, 2));
+  };
+
+  const handleSendMcpRpcRequest = async () => {
+    let parsedReq: Record<string, unknown> = {};
+    try {
+      parsedReq = JSON.parse(mcpRpcRequestText);
+    } catch (err) {
+      setMcpRpcResponseText(
+        JSON.stringify({ error: `Invalid JSON-RPC request: ${(err as Error).message}` }, null, 2)
+      );
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/mcp/rpc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(parsedReq),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMcpRpcResponseText(JSON.stringify(data, null, 2));
+        return;
+      }
+    } catch {
+      // Fallback to local MCP JSON-RPC handler
+    }
+    setMcpRpcResponseText(JSON.stringify(handleMcpJsonRpc(parsedReq, editorTree), null, 2));
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
       {/* Strict 3-Zone Top Bar Contract */}
@@ -884,6 +1320,230 @@ export default function App() {
 
       {/* Main Content */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-8 space-y-8">
+        {/* Active Harness Configuration (harness2.v1) Registry & Import Banner */}
+        <section className="bg-slate-900 border border-emerald-500/30 rounded-xl p-4 space-y-4">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
+                <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold">
+                  ACTIVE HARNESS CONFIG · {activeHarnessProfile?.config.schemaVersion ?? 'harness2.v1'}
+                </span>
+                <span className="text-white font-semibold">
+                  {activeHarnessProfile?.name ?? 'harness-configuration-oc_46a97fbf.json'}
+                </span>
+                <span aria-hidden="true" className="text-slate-600">
+                  ·
+                </span>
+                <span className="text-slate-300">
+                  Substrate: <strong className="text-blue-300">{substrate.toUpperCase()}</strong>
+                </span>
+                <span aria-hidden="true" className="text-slate-600">
+                  ·
+                </span>
+                <span className="text-slate-300">
+                  Always-On:{' '}
+                  <strong className="text-emerald-300">
+                    {census.alwaysOnChars.toLocaleString()} / {census.alwaysOnMax.toLocaleString()}{' '}
+                    chars
+                  </strong>
+                </span>
+                <span aria-hidden="true" className="text-slate-600">
+                  ·
+                </span>
+                <span className="text-slate-300">
+                  {census.nFiles} files ({census.skills} skills, {census.subAgents} subagent,{' '}
+                  {census.scripts} script, MCP: {census.mcpServers.join(', ') || 'none'})
+                </span>
+              </div>
+              <p className="text-xs text-slate-400">
+                {harnessConfigStatus} — Source asset:{' '}
+                <a
+                  href={ATTACHED_HARNESS_CONFIG_ASSET_PATH}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-mono text-emerald-400 hover:underline"
+                >
+                  {ATTACHED_HARNESS_CONFIG_ASSET_PATH}
+                </a>
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <label className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white transition-colors cursor-pointer flex items-center gap-1.5">
+                <Plus className="w-3.5 h-3.5" />
+                Add / Upload Config (.json)
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={handleUploadHarnessConfigFile}
+                  className="hidden"
+                />
+              </label>
+              <button
+                onClick={() => setShowHarnessConfigDrawer((prev) => !prev)}
+                className="px-3 py-1.5 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-700 text-xs font-medium text-slate-200 transition-colors cursor-pointer"
+              >
+                {showHarnessConfigDrawer ? 'Hide JSON Config Inspector' : 'Inspect / Paste Config JSON'}
+              </button>
+              <button
+                onClick={() => setActiveTab('surface')}
+                className="px-3 py-1.5 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-700 text-xs font-medium text-emerald-300 transition-colors cursor-pointer"
+              >
+                Edit 9 Files in Validator
+              </button>
+            </div>
+          </div>
+
+          {/* Profile Selector Pills & Component File Summary */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800/80">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] font-mono text-slate-400 mr-1">Saved Configs:</span>
+              {harnessProfiles.map((prof) => {
+                const isSelected = prof.id === activeHarnessProfile?.id;
+                return (
+                  <button
+                    key={prof.id}
+                    onClick={() => handleSelectHarnessProfile(prof.id)}
+                    className={`px-2.5 py-1 rounded-md text-xs font-mono border transition-colors cursor-pointer ${
+                      isSelected
+                        ? 'bg-emerald-950/60 text-emerald-200 border-emerald-500/60'
+                        : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-200'
+                    }`}
+                  >
+                    {prof.name} ({prof.badge})
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              {Object.keys(editorTree).map((filePath) => (
+                <button
+                  key={filePath}
+                  onClick={() => {
+                    setSelectedFile(filePath);
+                    setActiveTab('surface');
+                  }}
+                  className="px-2 py-0.5 rounded bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[11px] font-mono text-slate-300 transition-colors cursor-pointer"
+                >
+                  {filePath}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {showHarnessConfigDrawer && (
+            <div className="pt-3 border-t border-slate-800 grid grid-cols-1 lg:grid-cols-12 gap-4">
+              <div className="lg:col-span-5 space-y-3 bg-slate-950 border border-slate-800 rounded-lg p-4">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-300">
+                  Attached Configuration Summary (`harness2.v1`)
+                </h3>
+                <div className="space-y-1.5 text-xs font-mono text-slate-300">
+                  <div>
+                    <span className="text-slate-500">schemaVersion:</span>{' '}
+                    {ATTACHED_OC_HARNESS_CONFIGURATION.schemaVersion}
+                  </div>
+                  <div>
+                    <span className="text-slate-500">exportedAt:</span>{' '}
+                    {ATTACHED_OC_HARNESS_CONFIGURATION.exportedAt}
+                  </div>
+                  <div>
+                    <span className="text-slate-500">substrate:</span>{' '}
+                    {ATTACHED_OC_HARNESS_CONFIGURATION.substrate} (OpenCode)
+                  </div>
+                  <div>
+                    <span className="text-slate-500">alwaysOnChars:</span>{' '}
+                    {census.alwaysOnChars.toLocaleString()} /{' '}
+                    {census.alwaysOnMax.toLocaleString()}
+                  </div>
+                  <div>
+                    <span className="text-slate-500">skills (2):</span>{' '}
+                    skills/google_agents_cli_deploy/SKILL.md, skills/developing_bazel/SKILL.md
+                  </div>
+                  <div>
+                    <span className="text-slate-500">subAgents (1):</span>{' '}
+                    sub_agents/cloud_trace_auditor/AGENT.md
+                  </div>
+                  <div>
+                    <span className="text-slate-500">scripts (1):</span>{' '}
+                    scripts/gcloud_deploy_monitor.py
+                  </div>
+                  <div>
+                    <span className="text-slate-500">mcpServers (2):</span>{' '}
+                    {census.mcpServers.join(', ')}
+                  </div>
+                </div>
+
+                <div className="pt-2 space-y-2 border-t border-slate-800">
+                  <label className="block text-[11px] font-mono text-slate-400">
+                    Configuration Profile Name
+                  </label>
+                  <input
+                    type="text"
+                    value={harnessConfigInputName}
+                    onChange={(e) => setHarnessConfigInputName(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs font-mono text-white"
+                  />
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <button
+                      onClick={() => handleImportHarnessConfigJson(harnessConfigRawJson)}
+                      className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold text-white transition-colors cursor-pointer"
+                    >
+                      Validate &amp; Apply JSON Configuration
+                    </button>
+                    <button
+                      onClick={() => {
+                        const freshStr = JSON.stringify(ATTACHED_OC_HARNESS_CONFIGURATION, null, 2);
+                        setHarnessConfigInputName('harness-configuration-oc_46a97fbf.json');
+                        setHarnessConfigRawJson(freshStr);
+                        handleImportHarnessConfigJson(
+                          freshStr,
+                          'harness-configuration-oc_46a97fbf.json'
+                        );
+                      }}
+                      className="px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-medium text-slate-200 transition-colors cursor-pointer"
+                    >
+                      Reset to Attached `harness-configuration-oc_46a97fbf.json`
+                    </button>
+                  </div>
+                  {harnessConfigError && (
+                    <div className="p-2.5 rounded bg-red-950/50 border border-red-500/40 text-xs font-mono text-red-300">
+                      {harnessConfigError}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="lg:col-span-7 bg-slate-950 border border-slate-800 rounded-lg p-3 flex flex-col">
+                <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800 text-xs font-mono text-slate-400">
+                  <span>{harnessConfigInputName} (Editable `harness2.v1` JSON)</span>
+                  <button
+                    onClick={() => handleCopy('attached-cfg-json', harnessConfigRawJson)}
+                    className="text-slate-300 hover:text-white flex items-center gap-1 cursor-pointer"
+                  >
+                    {copiedId === 'attached-cfg-json' ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-400" /> Copied
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" /> Copy JSON
+                      </>
+                    )}
+                  </button>
+                </div>
+                <textarea
+                  value={harnessConfigRawJson}
+                  onChange={(e) => setHarnessConfigRawJson(e.target.value)}
+                  rows={12}
+                  spellCheck={false}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-lg p-3 font-mono text-xs text-emerald-200 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+            </div>
+          )}
+        </section>
+
         {(activeTab === 'surface' ||
           activeTab === 'mcp' ||
           activeTab === 'recursion' ||
@@ -1008,6 +1668,26 @@ export default function App() {
                     }`}
                   >
                     4. Agent Training &amp; Support Runbook
+                  </button>
+                  <button
+                    onClick={() => setArchSection('connect')}
+                    className={`px-3.5 py-2 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+                      archSection === 'connect'
+                        ? 'bg-emerald-600 text-white'
+                        : 'text-emerald-300 hover:text-white'
+                    }`}
+                  >
+                    5. Connect Agent (API · MCP · BYOC Code)
+                  </button>
+                  <button
+                    onClick={() => setArchSection('universal-deploy')}
+                    className={`px-3.5 py-2 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+                      archSection === 'universal-deploy'
+                        ? 'bg-indigo-600 text-white'
+                        : 'text-indigo-300 hover:text-white'
+                    }`}
+                  >
+                    6. Universal Platform Deploy (No OpenCode / Codex)
                   </button>
                 </div>
 
@@ -1752,6 +2432,850 @@ export default function App() {
                           </div>
                         </div>
                       </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* SECTION 5: 3-WAY AGENT CONNECTOR (BRING-YOUR-OWN-CODE, MCP JSON-RPC & REST API) */}
+            {archSection === 'connect' && (
+              <div className="space-y-6">
+                {/* Connector Mode Switcher Header */}
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <h2 className="text-base font-bold text-white">
+                      3-Way Agent Skill &amp; Code Connection Hub — Bring-Your-Own-Code (BYOC), MCP
+                      Connector &amp; REST API
+                    </h2>
+                    <p className="text-xs text-slate-400">
+                      Connect any external or in-browser agent to the workbench skills via{' '}
+                      <code className="text-emerald-300">Bring-Your-Own-Code (BYOC)</code>,{' '}
+                      <code className="text-blue-300">POST /api/mcp/rpc</code> (JSON-RPC 2.0 MCP
+                      Connector), or{' '}
+                      <code className="text-amber-300">GET /api/agent-connector/skills</code> (REST
+                      API).
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-950 rounded-lg border border-slate-800 shrink-0">
+                    <button
+                      onClick={() => setConnectorMode('byoc')}
+                      className={`px-3.5 py-2 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+                        connectorMode === 'byoc'
+                          ? 'bg-emerald-600 text-white'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      1. Bring-Your-Own-Code (BYOC) Sandbox
+                    </button>
+                    <button
+                      onClick={() => setConnectorMode('mcp')}
+                      className={`px-3.5 py-2 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+                        connectorMode === 'mcp'
+                          ? 'bg-blue-600 text-white'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      2. MCP JSON-RPC Connector (/api/mcp/rpc)
+                    </button>
+                    <button
+                      onClick={() => setConnectorMode('rest')}
+                      className={`px-3.5 py-2 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+                        connectorMode === 'rest'
+                          ? 'bg-blue-600 text-white'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      3. Agent Skills REST API (/api/agent-connector)
+                    </button>
+                  </div>
+                </div>
+
+                {/* MODE 1: BRING-YOUR-OWN-CODE (BYOC) LOGIC RUNNER & SKILL BINDER */}
+                {connectorMode === 'byoc' && (
+                  <div className="space-y-6">
+                    {/* Preset Template Bar */}
+                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <span className="text-xs font-semibold text-slate-300">
+                        Load Bring-Your-Own-Code (BYOC) Agent Logic Template:
+                      </span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {BYOC_PRESET_TEMPLATES.map((tpl) => (
+                          <button
+                            key={tpl.id}
+                            type="button"
+                            onClick={() => handleSelectByocPreset(tpl.id)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                              byocPresetId === tpl.id
+                                ? 'bg-emerald-600 text-white'
+                                : 'bg-slate-950 border border-slate-800 text-slate-300 hover:text-white'
+                            }`}
+                          >
+                            {tpl.badge}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                      {/* Left 7 Cols: BYOC Code Editor, Skill Binder & Input JSON */}
+                      <form
+                        onSubmit={handleRunByocExecution}
+                        className="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                          <div>
+                            <h3 className="text-sm font-bold text-white">
+                              Bring-Your-Own-Code (BYOC) Logic Editor &amp; Skill Binder
+                            </h3>
+                            <p className="text-xs text-slate-400">
+                              Bind skills from the registry, write custom TypeScript/Dart/Python
+                              agent logic, and execute against live task inputs.
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <select
+                              value={byocLanguage}
+                              onChange={(e) =>
+                                setByocLanguage(
+                                  e.target.value as 'typescript' | 'dart' | 'python'
+                                )
+                              }
+                              className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white"
+                            >
+                              <option value="typescript">TypeScript / JS (Live Sandbox)</option>
+                              <option value="dart">Dart 3.10 (Genkit + dart mcp-server)</option>
+                              <option value="python">Python 3.12 (Google ADK + Verifier)</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Interactive Skill Binder Checkboxes */}
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-semibold text-slate-300">
+                              Bind Workbench Skills to BYOC Execution Context ({byocBoundSkills.length}{' '}
+                              bound):
+                            </span>
+                            <span className="font-mono text-[11px] text-blue-400">
+                              context.skills
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-36 overflow-y-auto p-2 bg-slate-950 border border-slate-800 rounded-lg">
+                            {skillsCatalog.map((sk) => {
+                              const checked = byocBoundSkills.includes(sk.id);
+                              return (
+                                <label
+                                  key={sk.id}
+                                  className={`flex items-center gap-2 px-2.5 py-1.5 rounded border text-xs font-mono cursor-pointer transition-colors ${
+                                    checked
+                                      ? 'bg-blue-950/40 border-blue-500/60 text-white'
+                                      : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:text-slate-200'
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => handleToggleByocSkill(sk.id)}
+                                    className="rounded border-slate-700"
+                                  />
+                                  <span className="truncate">{sk.id}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* BYOC Code Editor */}
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between text-xs">
+                            <label className="font-semibold text-slate-300">
+                              Custom Agent Code Logic (`input`, `context.skills`, `context.mcpTools`,
+                              `context.helpers`)
+                            </label>
+                            <input
+                              type="text"
+                              value={byocTargetPath}
+                              onChange={(e) => setByocTargetPath(e.target.value)}
+                              className="bg-slate-950 border border-slate-800 rounded px-2 py-0.5 text-[11px] font-mono text-emerald-400 w-56"
+                              title="Target file path when mounted into Harness Tree"
+                            />
+                          </div>
+                          <textarea
+                            rows={12}
+                            value={byocCode}
+                            onChange={(e) => setByocCode(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 font-mono text-xs text-slate-100 leading-relaxed focus:outline-none focus:border-blue-500"
+                          />
+                        </div>
+
+                        {/* Task Input JSON */}
+                        <div className="space-y-1.5">
+                          <label className="block text-xs font-semibold text-slate-300">
+                            Task Input Payload (`input` JSON)
+                          </label>
+                          <textarea
+                            rows={5}
+                            value={byocInputJson}
+                            onChange={(e) => setByocInputJson(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 font-mono text-xs text-emerald-300 leading-relaxed focus:outline-none focus:border-blue-500"
+                          />
+                        </div>
+
+                        {byocMountNotice && (
+                          <div className="text-xs font-mono text-emerald-400 bg-emerald-950/30 border border-emerald-800 rounded-lg px-3 py-2">
+                            {byocMountNotice}
+                          </div>
+                        )}
+
+                        <div className="flex flex-wrap items-center gap-3 pt-1">
+                          <button
+                            type="submit"
+                            disabled={isRunningByoc}
+                            className="px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold text-white flex items-center gap-2 cursor-pointer"
+                          >
+                            <Play className="w-3.5 h-3.5" />
+                            {isRunningByoc
+                              ? 'Executing BYOC Logic...'
+                              : 'Execute BYOC Logic with Bound Skills'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleMountByocIntoHarness}
+                            className="px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white cursor-pointer"
+                          >
+                            Mount BYOC Code &amp; Skills in Harness Tree
+                          </button>
+                        </div>
+                      </form>
+
+                      {/* Right 5 Cols: Live BYOC Execution Trace & Output Inspector */}
+                      <div className="lg:col-span-5 space-y-5">
+                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+                          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                            <div>
+                              <h3 className="text-sm font-bold text-white">
+                                Live BYOC Execution Trace &amp; Verification Result
+                              </h3>
+                              <p className="text-xs text-slate-400">
+                                Endpoint: <code>POST /api/agent-connector/execute</code>
+                              </p>
+                            </div>
+                            <span
+                              className={`px-2.5 py-1 rounded text-xs font-mono font-bold ${
+                                byocResult.status === 'PASS'
+                                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                                  : byocResult.status === 'WARN'
+                                  ? 'bg-amber-950 text-amber-300 border border-amber-800'
+                                  : 'bg-rose-950 text-rose-300 border border-rose-800'
+                              }`}
+                            >
+                              {byocResult.status}
+                            </span>
+                          </div>
+
+                          <div className="space-y-2">
+                            {byocResult.executionTrace.map((st) => (
+                              <div
+                                key={st.step}
+                                className="bg-slate-950 border border-slate-800 rounded-lg p-3 space-y-1 text-xs"
+                              >
+                                <div className="flex items-center justify-between font-mono">
+                                  <span className="font-semibold text-blue-300">
+                                    {st.step}. {st.phase}
+                                  </span>
+                                  <span className="text-emerald-400">
+                                    {st.status} · {st.durationMs}ms
+                                  </span>
+                                </div>
+                                <div className="text-slate-300 text-[11px]">{st.detail}</div>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="font-semibold text-white">
+                                Returned Agent Output Payload:
+                              </span>
+                              <button
+                                onClick={() =>
+                                  handleCopy(
+                                    'byoc-out-json',
+                                    JSON.stringify(byocResult.outputData, null, 2)
+                                  )
+                                }
+                                className="text-[11px] font-mono text-blue-400 hover:text-blue-300 cursor-pointer"
+                              >
+                                {copiedId === 'byoc-out-json' ? 'Copied JSON' : 'Copy Output'}
+                              </button>
+                            </div>
+                            <pre className="bg-slate-950 border border-slate-800 rounded-lg p-3.5 font-mono text-xs text-emerald-300 overflow-x-auto leading-relaxed">
+                              {JSON.stringify(byocResult.outputData, null, 2)}
+                            </pre>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* MODE 2: LIVE MODEL CONTEXT PROTOCOL (MCP) JSON-RPC 2.0 CONNECTOR */}
+                {connectorMode === 'mcp' && (
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                    {/* Left: MCP JSON-RPC 2.0 Interactive Client */}
+                    <div className="lg:col-span-6 bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                        <div>
+                          <h3 className="text-sm font-bold text-white">
+                            Live MCP JSON-RPC 2.0 Connector (`POST /api/mcp/rpc`)
+                          </h3>
+                          <p className="text-xs text-slate-400">
+                            Test standard Model Context Protocol calls (`initialize`, `tools/list`,
+                            `tools/call`, `resources/list`) against the live server.
+                          </p>
+                        </div>
+                        <span className="text-xs font-mono text-emerald-400"> MCP 2025-03-26</span>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {[
+                          { id: 'initialize', label: 'initialize' },
+                          { id: 'tools/list', label: 'tools/list' },
+                          { id: 'call_load_skill', label: 'tools/call (load_harness_skill)' },
+                          { id: 'call_gcp_sizing', label: 'tools/call (check_gcp_agent_sizing)' },
+                          { id: 'call_byoc', label: 'tools/call (run_byoc_sandbox)' },
+                          { id: 'resources/list', label: 'resources/list' },
+                        ].map((m) => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={() => handleSelectMcpRpcPreset(m.id)}
+                            className={`px-2.5 py-1 rounded text-xs font-mono transition-colors cursor-pointer ${
+                              mcpRpcPreset === m.id
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-slate-950 border border-slate-800 text-slate-300 hover:text-white'
+                            }`}
+                          >
+                            {m.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-semibold text-slate-300">
+                          JSON-RPC 2.0 Request Body (`POST /api/mcp/rpc`)
+                        </label>
+                        <textarea
+                          rows={10}
+                          value={mcpRpcRequestText}
+                          onChange={(e) => setMcpRpcRequestText(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 font-mono text-xs text-slate-100"
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleSendMcpRpcRequest}
+                        className="w-full py-2.5 px-4 rounded-lg bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white cursor-pointer"
+                      >
+                        Send Live MCP JSON-RPC Request (POST /api/mcp/rpc)
+                      </button>
+
+                      <div className="bg-slate-950 border border-slate-800 rounded-lg p-3.5 space-y-2">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-semibold text-slate-300">
+                            Unified `mcp.json` Client Config (`dart` + `genkit` + `harness2-skills`)
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const unifiedMcp = JSON.stringify(
+                                {
+                                  mcpServers: {
+                                    dart: { command: 'dart', args: ['mcp-server'] },
+                                    genkit: { command: 'genkit', args: ['mcp'] },
+                                    'harness2-skills': {
+                                      url: `${window.location.origin}/api/mcp/rpc`,
+                                      transport: 'http-jsonrpc',
+                                    },
+                                  },
+                                },
+                                null,
+                                2
+                              );
+                              handleSyncMcpToHarness(unifiedMcp);
+                            }}
+                            className="text-emerald-400 hover:text-emerald-300 font-semibold cursor-pointer"
+                          >
+                            Sync to Active Harness `mcp.json`
+                          </button>
+                        </div>
+                        <pre className="font-mono text-[11px] text-slate-300 overflow-x-auto">
+                          {JSON.stringify(
+                            {
+                              mcpServers: {
+                                dart: { command: 'dart', args: ['mcp-server'] },
+                                genkit: { command: 'genkit', args: ['mcp'] },
+                                'harness2-skills': {
+                                  url: '/api/mcp/rpc',
+                                  transport: 'http-jsonrpc',
+                                },
+                              },
+                            },
+                            null,
+                            2
+                          )}
+                        </pre>
+                      </div>
+                    </div>
+
+                    {/* Right: Live MCP JSON-RPC Response */}
+                    <div className="lg:col-span-6 bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col space-y-3">
+                      <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                        <span className="font-mono text-xs font-bold text-emerald-400">
+                          MCP JSON-RPC 2.0 Server Response
+                        </span>
+                        <button
+                          onClick={() => handleCopy('mcp-rpc-resp', mcpRpcResponseText)}
+                          className="px-3 py-1 rounded bg-slate-950 border border-slate-800 text-xs font-mono text-slate-200 cursor-pointer"
+                        >
+                          {copiedId === 'mcp-rpc-resp' ? 'Copied' : 'Copy Response'}
+                        </button>
+                      </div>
+                      <pre className="flex-1 bg-slate-950 border border-slate-800 rounded-lg p-4 font-mono text-xs text-emerald-300 overflow-x-auto leading-relaxed max-h-[540px]">
+                        {mcpRpcResponseText}
+                      </pre>
+                    </div>
+                  </div>
+                )}
+
+                {/* MODE 3: AGENT SKILLS REST API CONNECTOR */}
+                {connectorMode === 'rest' && (
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                    {/* Left: Registered Skills Catalog */}
+                    <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h3 className="text-sm font-bold text-white">
+                            Registered Agent Skills API Catalog ({skillsCatalog.length})
+                          </h3>
+                          <p className="text-xs text-slate-400">
+                            <code>GET /api/agent-connector/skills</code>
+                          </p>
+                        </div>
+                        <span className="text-xs font-mono text-emerald-400">REST JSON</span>
+                      </div>
+
+                      <div className="space-y-2 max-h-[520px] overflow-y-auto pr-1">
+                        {skillsCatalog.map((sk) => {
+                          const active = sk.id === selectedApiSkill.id;
+                          return (
+                            <button
+                              key={sk.id}
+                              onClick={() => setSelectedApiSkillId(sk.id)}
+                              className={`w-full text-left p-3.5 rounded-xl border transition-colors cursor-pointer space-y-1 ${
+                                active
+                                  ? 'bg-slate-950 border-blue-500'
+                                  : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-mono text-xs font-bold text-white">
+                                  {sk.id}
+                                </span>
+                                <span className="text-[10px] font-mono text-blue-400 px-2 py-0.5 rounded bg-slate-900 border border-slate-800">
+                                  {sk.category}
+                                </span>
+                              </div>
+                              <p className="text-xs text-slate-400 line-clamp-2">
+                                {sk.description}
+                              </p>
+                              <div className="text-[11px] font-mono text-emerald-400 truncate">
+                                GET {sk.apiEndpoint}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Right: Selected Skill API Endpoint, Client Code & SKILL.md */}
+                    <div className="lg:col-span-7 space-y-5">
+                      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                          <div>
+                            <span className="text-xs font-mono text-blue-400">
+                              {selectedApiSkill.apiEndpoint}
+                            </span>
+                            <h3 className="text-base font-bold text-white mt-0.5">
+                              {selectedApiSkill.name} — REST API &amp; Agent SDK Integration
+                            </h3>
+                          </div>
+                          <button
+                            onClick={() =>
+                              handleCopy(
+                                'api-skill-curl',
+                                `curl -s ${window.location.origin}${selectedApiSkill.apiEndpoint} | jq .`
+                              )
+                            }
+                            className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs font-mono text-slate-200 cursor-pointer"
+                          >
+                            {copiedId === 'api-skill-curl' ? 'Copied cURL' : 'Copy cURL'}
+                          </button>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div className="text-xs font-semibold text-slate-300">
+                            Connect Any Agent via HTTP / TypeScript / Python / Dart:
+                          </div>
+                          <pre className="bg-slate-950 border border-slate-800 rounded-lg p-3.5 font-mono text-xs text-emerald-300 overflow-x-auto leading-relaxed">
+                            {[
+                              `# 1. Fetch skill specification & trigger rule over REST`,
+                              `curl -s ${window.location.origin}${selectedApiSkill.apiEndpoint}`,
+                              ``,
+                              `# 2. Execute agent task with bound skill & custom BYOC logic`,
+                              `curl -s -X POST ${window.location.origin}/api/agent-connector/execute \\`,
+                              `  -H "Content-Type: application/json" \\`,
+                              `  -d '{"language":"typescript","skillIds":["${selectedApiSkill.id}"],"input":{"serviceName":"my-agent"}}'`,
+                            ].join('\n')}
+                          </pre>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-semibold text-slate-300">
+                              Returned `SKILL.md` Payload (`{selectedApiSkill.skillPath}`):
+                            </span>
+                            <button
+                              onClick={() =>
+                                handleCopy('api-skill-md', selectedApiSkill.skillMarkdown)
+                              }
+                              className="text-blue-400 hover:text-blue-300 font-mono text-[11px] cursor-pointer"
+                            >
+                              {copiedId === 'api-skill-md' ? 'Copied SKILL.md' : 'Copy SKILL.md'}
+                            </button>
+                          </div>
+                          <pre className="bg-slate-950 border border-slate-800 rounded-lg p-3.5 font-mono text-xs text-slate-200 overflow-x-auto max-h-64 leading-relaxed">
+                            {selectedApiSkill.skillMarkdown}
+                          </pre>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* SECTION 6: UNIVERSAL CROSS-PLATFORM DEPLOYMENT & 6-STEP EFFECTIVE EXECUTION PLAYBOOK (NO OPENCODE OR CODEX REQUIRED) */}
+            {archSection === 'universal-deploy' && (
+              <div className="space-y-8">
+                {/* Top Summary & Platform Transpiler Selector */}
+                <div className="bg-slate-900 border border-indigo-500/40 rounded-xl p-6 space-y-5">
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+                    <div className="space-y-1.5 max-w-3xl">
+                      <div className="flex items-center gap-2 text-xs font-mono text-indigo-300">
+                        <Layers className="w-4 h-4" />
+                        <span>
+                          UNIVERSAL HARNESS² TRANSPILER &amp; 6-STEP EXECUTION PLAYBOOK (NO OPENCODE OR CODEX REQUIRED)
+                        </span>
+                      </div>
+                      <h2 className="text-xl font-bold text-white">
+                        How to Use &amp; Deploy Every Step into Any Agent Platform
+                      </h2>
+                      <p className="text-xs text-slate-300 leading-relaxed">
+                        OpenCode (<code className="text-blue-300">oc</code>) and Codex (
+                        <code className="text-blue-300">cx</code>) are just reference substrates.
+                        Every Harness² primitive in your active{' '}
+                        <code className="text-emerald-300">
+                          {activeHarnessProfile?.name ?? 'harness-configuration-oc_46a97fbf.json'}
+                        </code>{' '}
+                        — Always-On Surface, On-Demand <code className="text-blue-300">SKILL.md</code>{' '}
+                        Progressive Disclosure, Deterministic{' '}
+                        <code className="text-emerald-300">scripts/*.py</code> Verifiers, Isolated{' '}
+                        <code className="text-amber-300">AGENT.md</code> Sub-Agents, and{' '}
+                        <code className="text-blue-300">mcp.json</code> Servers — translates 1-to-1
+                        into standalone Python/TypeScript SDK loops, Google Cloud ADK, Firebase
+                        Genkit, LangGraph, Claude Code / Cursor, or an A2A HTTP container.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      <button
+                        onClick={handleDownloadTranspiledBundle}
+                        className="px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        Download {UNIVERSAL_PLATFORMS[targetPlatformId].shortLabel} Bundle (.json)
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 6 Target Platform Selector Cards */}
+                  <div className="space-y-2">
+                    <div className="text-xs font-semibold text-slate-300">
+                      Select Target Agent Platform (When Deploying Without OpenCode or Codex):
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {(Object.keys(UNIVERSAL_PLATFORMS) as UniversalPlatformId[]).map((pid) => {
+                        const pSpec = UNIVERSAL_PLATFORMS[pid];
+                        const isSelected = pid === targetPlatformId;
+                        return (
+                          <button
+                            key={pid}
+                            onClick={() => handleSelectTargetPlatform(pid)}
+                            className={`text-left p-4 rounded-xl border transition-colors cursor-pointer space-y-1.5 ${
+                              isSelected
+                                ? 'bg-indigo-950/40 border-indigo-500 text-white'
+                                : 'bg-slate-950/70 border-slate-800 text-slate-300 hover:border-slate-700'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-bold text-white">
+                                {pSpec.shortLabel}
+                              </span>
+                              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-indigo-300">
+                                {pSpec.badge}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed">
+                              {pSpec.summary}
+                            </p>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Primitive Translation Table & Live Transpiled Code Inspector */}
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 pt-2">
+                    {/* Left 5 cols: Primitive Mapping Table + Run/Deploy Commands */}
+                    <div className="lg:col-span-5 space-y-4">
+                      <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3">
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-indigo-300">
+                          Harness² → {UNIVERSAL_PLATFORMS[targetPlatformId].shortLabel} Mapping
+                        </h3>
+                        <div className="space-y-2.5">
+                          {UNIVERSAL_PLATFORMS[targetPlatformId].primitiveMappings.map(
+                            (pm, idx) => (
+                              <div
+                                key={idx}
+                                className="p-3 rounded-lg bg-slate-900 border border-slate-800 space-y-1 text-xs"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-bold text-white">
+                                    {pm.harnessPrimitive}
+                                  </span>
+                                  <span className="font-mono text-[10px] text-slate-400">
+                                    {pm.sourceFiles}
+                                  </span>
+                                </div>
+                                <div className="font-mono text-[11px] text-emerald-300">
+                                  → {pm.targetPlatformEquivalent}
+                                </div>
+                                <p className="text-[11px] text-slate-300 leading-relaxed">
+                                  {pm.implementationRule}
+                                </p>
+                              </div>
+                            )
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3 text-xs">
+                        <div className="font-bold text-white">
+                          Local Execution &amp; Production Deployment Commands
+                        </div>
+                        <div className="space-y-1.5">
+                          <div className="text-[11px] text-slate-400 font-mono">
+                            1. Run Locally Without OpenCode/Codex:
+                          </div>
+                          <pre className="p-2.5 rounded bg-slate-900 border border-slate-800 font-mono text-[11px] text-emerald-300 overflow-x-auto">
+                            $ {UNIVERSAL_PLATFORMS[targetPlatformId].runtimeCommand}
+                          </pre>
+                        </div>
+                        <div className="space-y-1.5">
+                          <div className="text-[11px] text-slate-400 font-mono">
+                            2. Deploy to Production:
+                          </div>
+                          <pre className="p-2.5 rounded bg-slate-900 border border-slate-800 font-mono text-[11px] text-blue-300 overflow-x-auto">
+                            $ {UNIVERSAL_PLATFORMS[targetPlatformId].deployCommand}
+                          </pre>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right 7 cols: Transpiled Platform Files Inspector */}
+                    <div className="lg:col-span-7 bg-slate-950 border border-slate-800 rounded-xl p-4 flex flex-col space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {transpiledFileKeys.map((fKey) => (
+                            <button
+                              key={fKey}
+                              onClick={() => setSelectedTranspiledFile(fKey)}
+                              className={`px-2.5 py-1 rounded text-xs font-mono transition-colors cursor-pointer ${
+                                activeTranspiledFile === fKey
+                                  ? 'bg-indigo-600 text-white'
+                                  : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                              }`}
+                            >
+                              {fKey}
+                            </button>
+                          ))}
+                        </div>
+                        <button
+                          onClick={() =>
+                            handleCopy(
+                              'transpiled-file-copy',
+                              transpiledBundle.generatedFiles[activeTranspiledFile] ?? ''
+                            )
+                          }
+                          className="px-3 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-mono text-slate-200 flex items-center gap-1.5 cursor-pointer"
+                        >
+                          {copiedId === 'transpiled-file-copy' ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 text-emerald-400" /> Copied File
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3.5 h-3.5" /> Copy {activeTranspiledFile}
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      <pre className="flex-1 bg-slate-900 border border-slate-800 rounded-lg p-4 font-mono text-xs text-slate-200 overflow-x-auto max-h-[540px] leading-relaxed">
+                        {transpiledBundle.generatedFiles[activeTranspiledFile] ?? ''}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Complete 6-Step Effective Usage, Deployment & Non-OpenCode/Codex Playbook */}
+                <div className="space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-lg font-bold text-white">
+                        Complete Step-by-Step Operational &amp; Cross-Platform Deployment Playbook (Steps 1–6)
+                      </h3>
+                      <p className="text-xs text-slate-400">
+                        Detailed instructions on how to use each step effectively, how to deploy it
+                        in production, and how to implement it when you do not have OpenCode or
+                        Codex.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-5">
+                    {STEP_BY_STEP_EFFECTIVE_PLAYBOOK.map((step) => (
+                      <article
+                        key={step.stepNumber}
+                        className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4"
+                      >
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
+                              <span className="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold">
+                                STEP 0{step.stepNumber}
+                              </span>
+                              {step.harnessFilesInvolved.map((f) => (
+                                <span
+                                  key={f}
+                                  className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-emerald-300"
+                                >
+                                  {f}
+                                </span>
+                              ))}
+                            </div>
+                            <h4 className="text-base font-bold text-white">{step.title}</h4>
+                          </div>
+
+                          <button
+                            onClick={() =>
+                              handleCopy(
+                                `playbook-code-${step.stepNumber}`,
+                                step.withoutOpenCodeOrCodex.codeExample
+                              )
+                            }
+                            className="px-3 py-1.5 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-mono text-slate-200 flex items-center gap-1.5 self-start cursor-pointer"
+                          >
+                            {copiedId === `playbook-code-${step.stepNumber}` ? (
+                              <>
+                                <Check className="w-3.5 h-3.5 text-emerald-400" /> Copied Pattern
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3.5 h-3.5" /> Copy Cross-Platform Code
+                              </>
+                            )}
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
+                          <div className="bg-slate-950 border border-slate-800 rounded-lg p-4 space-y-2">
+                            <div className="font-bold text-emerald-300 uppercase tracking-wider">
+                              1. How to Use This Step Effectively
+                            </div>
+                            <ul className="space-y-1.5 text-slate-300 leading-relaxed">
+                              {step.howToUseEffectively.map((bullet, i) => (
+                                <li key={i} className="flex items-start gap-2">
+                                  <span className="font-mono text-emerald-400">{i + 1}.</span>
+                                  <span>{bullet}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+
+                          <div className="bg-slate-950 border border-slate-800 rounded-lg p-4 space-y-2">
+                            <div className="font-bold text-blue-300 uppercase tracking-wider">
+                              2. How to Deploy This Step Effectively
+                            </div>
+                            <ul className="space-y-1.5 text-slate-300 leading-relaxed">
+                              {step.howToDeployEffectively.map((bullet, i) => (
+                                <li key={i} className="flex items-start gap-2">
+                                  <span className="font-mono text-blue-400">{i + 1}.</span>
+                                  <span>{bullet}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+
+                        <div className="bg-indigo-950/20 border border-indigo-500/30 rounded-xl p-4 space-y-3">
+                          <div className="text-xs font-bold uppercase tracking-wider text-indigo-300">
+                            3. How to Deploy in Another Platform (Without OpenCode or Codex)
+                          </div>
+                          <p className="text-xs text-slate-200 leading-relaxed">
+                            <strong>Concept Translation:</strong>{' '}
+                            {step.withoutOpenCodeOrCodex.conceptTranslation}
+                          </p>
+                          <p className="text-xs text-slate-300 leading-relaxed">
+                            <strong>Drop-In Implementation Pattern:</strong>{' '}
+                            {step.withoutOpenCodeOrCodex.dropInImplementationPattern}
+                          </p>
+                          <pre className="bg-slate-950 border border-slate-800 rounded-lg p-3.5 font-mono text-xs text-indigo-200 overflow-x-auto leading-relaxed">
+                            {step.withoutOpenCodeOrCodex.codeExample}
+                          </pre>
+                        </div>
+
+                        <div className="bg-slate-950 border border-slate-800 rounded-lg px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+                          <span className="text-slate-400">
+                            Step Verification Command:{' '}
+                            <span className="text-emerald-300">$ {step.verificationCommand}</span>
+                          </span>
+                          <button
+                            onClick={() =>
+                              handleCopy(`playbook-verify-${step.stepNumber}`, step.verificationCommand)
+                            }
+                            className="text-blue-400 hover:text-blue-300 text-[11px] cursor-pointer"
+                          >
+                            {copiedId === `playbook-verify-${step.stepNumber}`
+                              ? 'Copied Cmd'
+                              : 'Copy Command'}
+                          </button>
+                        </div>
+                      </article>
                     ))}
                   </div>
                 </div>

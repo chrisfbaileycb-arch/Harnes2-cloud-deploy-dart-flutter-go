@@ -22,6 +22,17 @@ import {
   ManagedAgentDeployment,
 } from './src/core/gcpAgentsCliManual';
 import { synthesizeHarnessFromInput } from './src/core/harnessArchitectAgent';
+import {
+  executeByocWithSkills,
+  getRegisteredSkillsCatalog,
+  handleMcpJsonRpc,
+} from './src/core/agentSkillConnector';
+import {
+  ATTACHED_OC_HARNESS_CONFIGURATION,
+  HarnessConfigurationProfile,
+  INITIAL_HARNESS_CONFIGURATION_PROFILES,
+  parseAndValidateHarnessConfigJson,
+} from './src/core/harnessConfigurationManager';
 
 async function startServer() {
   const app = express();
@@ -29,13 +40,27 @@ async function startServer() {
 
   app.use(express.json({ limit: '10mb' }));
 
-  // Serve repository assets (/assets/*.png, /assets/*.gif, /assets/*.mp4)
+  // Serve attached AI Studio assets (/assets/aistudio/*) and repository assets (/assets/*)
+  app.use(
+    '/assets/aistudio',
+    express.static(path.resolve(process.cwd(), 'public/assets/aistudio'))
+  );
   app.use('/assets', express.static(path.resolve(process.cwd(), 'assets')));
 
   // In-memory state store
   const customTasksStore: LedgerTaskSpec[] = [...DEFAULT_DEMO_TASKS];
   const sweepRunsStore = new Map<string, DemoRunSweepResult>();
-  let mcpConfigStore: McpConfig = structuredClone(DEFAULT_MCP_CONFIG);
+  const harnessProfilesStore: HarnessConfigurationProfile[] = structuredClone(
+    INITIAL_HARNESS_CONFIGURATION_PROFILES
+  );
+  let activeHarnessProfileId = harnessProfilesStore[0]?.id ?? 'attached-oc-46a97fbf';
+  let mcpConfigStore: McpConfig = (() => {
+    try {
+      return JSON.parse(ATTACHED_OC_HARNESS_CONFIGURATION.editorTree['mcp.json']) as McpConfig;
+    } catch {
+      return structuredClone(DEFAULT_MCP_CONFIG);
+    }
+  })();
   const gcpDeploymentsStore: ManagedAgentDeployment[] = structuredClone(
     INITIAL_MANAGED_DEPLOYMENTS
   );
@@ -44,12 +69,16 @@ async function startServer() {
   sweepRunsStore.set('latest', initialDemo);
 
   app.get('/api/state', (_req, res) => {
+    const activeProfile =
+      harnessProfilesStore.find((p) => p.id === activeHarnessProfileId) ?? harnessProfilesStore[0];
     res.json({
       latestRun: sweepRunsStore.get('latest'),
       tasks: customTasksStore,
       benchmarks: BENCHMARK_RESULTS,
       mcpConfig: mcpConfigStore,
       gcpDeployments: gcpDeploymentsStore,
+      activeHarnessProfile: activeProfile,
+      harnessProfiles: harnessProfilesStore,
       surfaces: {
         opencode: OPENCODE_SURFACE,
         codex: CODEX_SURFACE,
@@ -300,16 +329,132 @@ async function startServer() {
     res.json(baseResult);
   });
 
+  // 1. Agent Skill REST API Connector: List all skills
+  app.get('/api/agent-connector/skills', (req, res) => {
+    const category = typeof req.query.category === 'string' ? req.query.category : '';
+    const catalog = getRegisteredSkillsCatalog();
+    const filtered = category
+      ? catalog.filter((s) => s.category.toLowerCase().includes(category.toLowerCase()))
+      : catalog;
+    res.json({
+      count: filtered.length,
+      skills: filtered,
+    });
+  });
+
+  // 2. Agent Skill REST API Connector: Fetch a single skill specification & verifier script
+  app.get('/api/agent-connector/skills/:skillId', (req, res) => {
+    const { skillId } = req.params;
+    const catalog = getRegisteredSkillsCatalog();
+    const found = catalog.find((s) => s.id === skillId || s.name === skillId);
+    if (!found) {
+      res.status(404).json({
+        error: `Skill '${skillId}' not found`,
+        availableSkillIds: catalog.map((s) => s.id),
+      });
+      return;
+    }
+    res.json(found);
+  });
+
+  // 3. Agent Skill REST API & BYOC Execution Endpoint
+  app.post('/api/agent-connector/execute', (req, res) => {
+    const body = req.body ?? {};
+    const language =
+      body.language === 'dart' || body.language === 'python' ? body.language : 'typescript';
+    const code = String(body.code ?? 'return { status: "ok", input };');
+    const inputJson =
+      typeof body.inputJson === 'string'
+        ? body.inputJson
+        : JSON.stringify(body.input ?? {}, null, 2);
+    const skillIds = Array.isArray(body.skillIds)
+      ? body.skillIds.map(String)
+      : ['developing_bazel', 'developing_genkit_dart', 'google_agents_cli_deploy'];
+    const targetHarnessPath =
+      typeof body.targetHarnessPath === 'string' ? body.targetHarnessPath : undefined;
+
+    const result = executeByocWithSkills({
+      code,
+      language,
+      inputJson,
+      skillIds,
+      targetHarnessPath,
+    });
+    res.json(result);
+  });
+
+  // 4. Model Context Protocol (MCP) JSON-RPC 2.0 Connector Endpoint
+  app.post('/api/mcp/rpc', (req, res) => {
+    const activeProfile =
+      harnessProfilesStore.find((p) => p.id === activeHarnessProfileId) ?? harnessProfilesStore[0];
+    const rpcResponse = handleMcpJsonRpc(req.body ?? {}, activeProfile?.config.editorTree);
+    res.json(rpcResponse);
+  });
+
+  // 5. Harness Configuration Registry & Import Endpoints (harness2.v1)
+  app.get('/api/harness-configurations', (_req, res) => {
+    const activeProfile =
+      harnessProfilesStore.find((p) => p.id === activeHarnessProfileId) ?? harnessProfilesStore[0];
+    res.json({
+      activeProfileId: activeHarnessProfileId,
+      activeProfile,
+      profiles: harnessProfilesStore,
+    });
+  });
+
+  app.post('/api/harness-configurations/import', (req, res) => {
+    const body = req.body ?? {};
+    const name = String(body.name || `harness-configuration-${Date.now()}.json`).trim();
+    const rawJson =
+      typeof body.rawJson === 'string' ? body.rawJson : JSON.stringify(body.config ?? body);
+    const fallbackSubstrate = body.substrate === 'cx' ? 'cx' : 'oc';
+
+    const parsed = parseAndValidateHarnessConfigJson(rawJson, fallbackSubstrate);
+    if (!parsed.ok || !parsed.config) {
+      res.status(400).json({
+        ok: false,
+        error: parsed.error ?? 'Failed to validate harness configuration JSON',
+      });
+      return;
+    }
+
+    const newProfile: HarnessConfigurationProfile = {
+      id: `cfg-${Date.now()}`,
+      name,
+      badge: `${parsed.config.substrate.toUpperCase()} · ${parsed.config.validationCensus.nFiles} files`,
+      sourceAssetPath: parsed.config.sourceAssetPath,
+      config: parsed.config,
+    };
+
+    harnessProfilesStore.unshift(newProfile);
+    activeHarnessProfileId = newProfile.id;
+
+    if (typeof parsed.config.editorTree['mcp.json'] === 'string') {
+      try {
+        mcpConfigStore = JSON.parse(parsed.config.editorTree['mcp.json']) as McpConfig;
+      } catch {
+        // Keep existing mcpConfigStore if custom mcp.json is invalid
+      }
+    }
+
+    res.json({
+      ok: true,
+      activeProfileId: activeHarnessProfileId,
+      profile: newProfile,
+      profiles: harnessProfilesStore,
+    });
+  });
+
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false },
       appType: 'spa',
     });
     app.use(vite.middlewares);
   } else {
     const distPath = path.resolve(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
+    app.use((_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
