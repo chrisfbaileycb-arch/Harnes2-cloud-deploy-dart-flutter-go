@@ -1,0 +1,6 @@
+{
+  "name": "Harness² — Recursive Agent Harnessing",
+  "description": "Interactive workbench and execution engine for Harness²: Recursive Agent Harnessing for an Open World (Task-level Propose-Probe-Compose & Harnessing-level Experience Library).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
