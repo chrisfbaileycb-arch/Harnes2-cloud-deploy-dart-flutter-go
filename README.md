@@ -4,6 +4,20 @@
 
 It provides interactive architecture design, deterministic surface validation, a **3-Way Agent Skill Connector** (REST API, MCP JSON-RPC 2.0, and Bring-Your-Own-Code), a **Universal Platform Transpiler** (for deploying harnesses *without* OpenCode or Codex), and step-by-step execution engines for **Firebase Genkit**, **Bazel 8/9 + Dart 3.10 / Flutter 3.38**, and **Google Cloud ADK (`agents-cli`) Managed Deployments**.
 
+## Railway dogfooding deployment
+
+The hosted application is the Node/React workbench, not a Dart/Flutter/Go runtime. It uses a private owner login; `OWNER_PASSWORD` is required in production. Provider keys must not be set in Railway variables. Enter your Gemini key in the **Bring your own Gemini key** panel. It lives only in page memory, clears on reload or Clear key, and goes directly to Google's HTTPS endpoint in a request header. No application-server AI proxy is involved. The model field is editable for your account's available models. Failed provider requests are shown as errors without silent simulated success. Video content is sent directly to Google only when you run synthesis with your key.
+
+Without a key, deterministic instruction-to-harness design, validators, skill catalogs, imports, and exports remain available. AI refines the title, summary, and rationale; file generation remains deterministic. Review exported code before running it.
+
+Cloud fleet/telemetry are example data. This workbench does not provision Google Cloud resources; copy generated commands into your own configured runtime. JavaScript BYOC executes trusted code in the browser, without sandbox isolation. Server-side arbitrary code execution is disabled, including through MCP. Dart/Python BYOC results are calculator previews, not executions or verified deployments. External Dart/Genkit MCP servers are not connected by this hosted workbench.
+
+Tasks, imported configuration profiles, active profile selection, and MCP configuration persist atomically in `DATA_DIR/workspace.json` on the attached `/data` volume. Editor changes and run history are transient unless imported/exported; download your harness to keep a copy. Do not include API credentials in exported/imported configuration files, MCP environment fields, or code templates.
+
+Build: `npm ci && npm run build`. Start: `NODE_ENV=production OWNER_PASSWORD=... DATA_DIR=/data npm start`. Railway supplies `PORT`; `/health` is public. All workspace files and APIs require the owner session in production. The owner cookie is secure and HTTP-only, and writes require same-origin requests. This is a single-owner, single-instance workspace.
+
+Validation: `npm run lint`, `npm test`, `npm run build`. Tests cover direct-provider request boundaries, non-echoing failures, disabled server evaluation, preview labeling, owner/CSRF checks, unsupported cloud deployment, deterministic synthesis, and task persistence across process restart. No real API key, paid provider call, cloud provisioning, or outbound message is used in these checks.
+
 ---
 
 ## Core Modules & Capabilities

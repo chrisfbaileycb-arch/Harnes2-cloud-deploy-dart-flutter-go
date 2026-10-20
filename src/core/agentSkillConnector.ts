@@ -393,11 +393,15 @@ export function executeByocWithSkills(params: {
 
   let outputData: unknown = null;
   let execStatus: 'PASS' | 'WARN' | 'ERROR' = inputParseError ? 'ERROR' : 'PASS';
-  let execDetail = 'Executed BYOC handler with bound skill context and deterministic verifiers.';
+  let execDetail = 'Executed trusted JavaScript in this browser. No external MCP servers or runtime verifiers were invoked.';
 
   if (inputParseError) {
     outputData = { error: `Invalid JSON input: ${inputParseError}` };
     execDetail = `JSON Input Parse Error: ${inputParseError}`;
+  } else if (params.language === 'typescript' && typeof window === 'undefined') {
+    execStatus = 'ERROR';
+    execDetail = 'Server-side arbitrary code execution is unavailable. Run trusted JavaScript in the browser or export code to your own runtime.';
+    outputData = { error: execDetail };
   } else if (params.language === 'typescript') {
     try {
       const fn = new Function(
@@ -424,7 +428,9 @@ export function executeByocWithSkills(params: {
       };
     }
   } else {
-    // Deterministic evaluation for Dart Genkit or Python ADK BYOC code
+    execStatus = 'WARN';
+    execDetail = 'Calculator preview only. Dart/Python code was not executed, and no external MCP server was connected.';
+    // Deterministic calculator preview
     const amounts = Array.isArray(parsedInput.ledgerAmounts) ? parsedInput.ledgerAmounts : [100, -20];
     const netTotal = helpers.sumSignedLedger(amounts);
     const memGi = Number(parsedInput.memoryGi ?? 4);
@@ -438,7 +444,7 @@ export function executeByocWithSkills(params: {
     outputData = {
       runtime: params.language === 'dart' ? 'Dart 3.10 VM + Genkit 1.0' : 'Python 3.12 + Google ADK',
       boundSkills: activeSkills.map((s) => s.id),
-      mcpServersConnected: ['dart (dart mcp-server)', 'genkit (genkit mcp)', 'harness2 (/api/mcp/rpc)'],
+      mcpServersConnected: [],
       reconciledNetTotal: `Total: ${netTotal.toFixed(2)}`,
       gcpContainerSizing: {
         memoryGi: memGi,
@@ -450,8 +456,8 @@ export function executeByocWithSkills(params: {
       },
       codeVerification:
         params.language === 'dart'
-          ? 'Verified @Schema() part directive + defineMcpHost(dart mcp-server)'
-          : 'Verified LlmAgent tool registration + OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=NO_CONTENT',
+          ? 'Not executed — Dart runtime is not connected'
+          : 'Not executed — Python runtime is not connected',
     };
   }
 
@@ -465,7 +471,7 @@ export function executeByocWithSkills(params: {
       name: s.name,
       triggerLine: s.triggerLine,
     })),
-    mcpToolsBound,
+    mcpToolsBound: [],
     executionTrace: [
       {
         step: 1,
@@ -479,7 +485,7 @@ export function executeByocWithSkills(params: {
       {
         step: 2,
         phase: 'MCP Server Tool Discovery (/api/mcp/rpc)',
-        detail: `Bound ${mcpToolsBound.length} live MCP tools across dart mcp-server, genkit mcp & harness2`,
+        detail: 'Local helper catalog only; no external MCP connection.',
         durationMs: 19,
         status: 'OK',
       },
@@ -495,7 +501,7 @@ export function executeByocWithSkills(params: {
         phase: 'Deterministic Preflight & Output Gate',
         detail:
           execStatus === 'PASS'
-            ? 'All bound skill guardrails and deterministic output assertions passed.'
+            ? 'Handler returned. No independent runtime or guardrail verification was performed.'
             : execStatus === 'WARN'
             ? 'Execution completed with sizing/configuration warnings.'
             : 'Execution halted by deterministic verification gate.',
@@ -506,9 +512,7 @@ export function executeByocWithSkills(params: {
     outputData,
     verificationSummary:
       execStatus === 'PASS'
-        ? `PASS — Executed ${params.language.toUpperCase()} BYOC logic with ${
-            activeSkills.length
-          } bound skill(s) and 0 guardrail violations.`
+        ? 'JavaScript handler returned in browser. Review its output; execution is not a verification of correctness.'
         : execDetail,
     targetHarnessPath:
       params.targetHarnessPath ||

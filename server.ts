@@ -1,7 +1,8 @@
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { GoogleGenAI, Type } from '@google/genai';
+import { makeOwnerGate } from './owner-gate';
+import fs from 'node:fs';
 import {
   BENCHMARK_RESULTS,
   checkMcpServers,
@@ -36,7 +37,13 @@ import {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT || 3000);
+  app.set('trust proxy', 1);
+  app.disable('x-powered-by');
+  app.get('/health', (_req, res) => res.json({ status: 'ok', providerKeys: 'browser-only' }));
+  if (process.env.NODE_ENV === 'production' || process.env.OWNER_PASSWORD) {
+    app.use(makeOwnerGate(process.env.OWNER_PASSWORD || ''));
+  }
 
   app.use(express.json({ limit: '10mb' }));
 
@@ -68,6 +75,30 @@ async function startServer() {
   const initialDemo = runDeterministicDemo(2, 'both', customTasksStore);
   sweepRunsStore.set('latest', initialDemo);
 
+  const dataDir = process.env.DATA_DIR || path.resolve('data');
+  fs.mkdirSync(dataDir, { recursive: true });
+  const stateFile = path.join(dataDir, 'workspace.json');
+  if (fs.existsSync(stateFile)) {
+    const saved = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    if (Array.isArray(saved.tasks)) customTasksStore.splice(0, customTasksStore.length, ...saved.tasks);
+    if (Array.isArray(saved.profiles) && saved.profiles.length) harnessProfilesStore.splice(0, harnessProfilesStore.length, ...saved.profiles);
+    activeHarnessProfileId = saved.activeProfileId || activeHarnessProfileId;
+    mcpConfigStore = saved.mcpConfig || mcpConfigStore;
+    sweepRunsStore.set('latest', runDeterministicDemo(2, 'both', customTasksStore));
+  }
+  app.use((req, res, next) => {
+    // Write before responding so a successful mutation survives process restart.
+    const send = res.json.bind(res);
+    res.json = (body) => {
+      if (req.method === 'POST' && res.statusCode < 400) {
+        fs.writeFileSync(stateFile + '.tmp', JSON.stringify({ tasks: customTasksStore, profiles: harnessProfilesStore, activeProfileId: activeHarnessProfileId, mcpConfig: mcpConfigStore }), { mode: 0o600 });
+        fs.renameSync(stateFile + '.tmp', stateFile);
+      }
+      return send(body);
+    };
+    next();
+  });
+
   app.get('/api/state', (_req, res) => {
     const activeProfile =
       harnessProfilesStore.find((p) => p.id === activeHarnessProfileId) ?? harnessProfilesStore[0];
@@ -90,87 +121,8 @@ async function startServer() {
     res.json({ deployments: gcpDeploymentsStore });
   });
 
-  app.post('/api/gcp-deployments', (req, res) => {
-    const body = req.body ?? {};
-    const name = String(body.name ?? 'cloud-adk-agent').trim();
-    const target: GcpDeployTarget =
-      body.target === 'cloud_run' || body.target === 'gke' ? body.target : 'agent_runtime';
-    const region = String(body.region ?? 'us-east1').trim();
-    const project = String(body.project ?? 'prod-cloud-ops').trim();
-    const cpu = Number(body.cpu ?? 1);
-    const memoryGi = Number(body.memoryGi ?? 4);
-    const concurrency = Number(body.concurrency ?? 8);
-    const minInstances = Number(body.minInstances ?? 1);
-    const maxInstances = Number(body.maxInstances ?? 10);
-    const agentIdentity = Boolean(body.agentIdentity ?? target === 'agent_runtime');
-    const cmekEnabled = Boolean(body.cmekEnabled ?? false);
-
-    const existingIdx = gcpDeploymentsStore.findIndex((d) => d.name === name);
-    const peakMiB = 512 + concurrency * 220;
-    const isDegraded = peakMiB > memoryGi * 1024 * 0.88;
-
-    const newDep: ManagedAgentDeployment = {
-      id: existingIdx >= 0 ? gcpDeploymentsStore[existingIdx].id : `dep-${Date.now()}`,
-      name,
-      target,
-      region,
-      project,
-      status: isDegraded ? 'DEGRADED' : 'HEALTHY',
-      framework: 'google-adk',
-      registrationType: target === 'agent_runtime' ? 'adk' : 'a2a',
-      resourceUri:
-        target === 'agent_runtime'
-          ? `projects/189717904217/locations/${region}/reasoningEngines/${Math.floor(
-              100000 + Math.random() * 900000
-            )}`
-          : target === 'cloud_run'
-          ? `https://${name}-189717904217.${region}.run.app`
-          : `gke://${project}/${region}/agent-autopilot-cluster/ns/agents`,
-      endpointOrEngineId:
-        target === 'agent_runtime'
-          ? 'reasoningEngines (:streamQuery)'
-          : '/a2a/app/.well-known/agent-card.json',
-      cpu,
-      memoryGi,
-      concurrency,
-      minInstances,
-      maxInstances,
-      agentIdentity,
-      agentGatewayEgress:
-        target === 'agent_runtime' && body.agentGateway
-          ? `projects/${project}/locations/${region}/agentGateways/corp-egress-gw`
-          : null,
-      cmekEnabled,
-      otelCaptureMode: 'NO_CONTENT',
-      bqAnalyticsDataset: `${project}.agent_analytics`,
-      p95LatencyMs: isDegraded ? 1420 : 590,
-      errorRatePct: isDegraded ? 2.1 : 0.08,
-      evalPassRatePct: 96.8,
-      lastDeployedAt: new Date().toISOString(),
-      recentSpans: [
-        {
-          traceId: Math.random().toString(16).slice(2, 18) + 'a8f09123c4e1029a',
-          workflowSpan:
-            target === 'agent_runtime'
-              ? 'invoke_workflow (streaming_agent_run_with_events)'
-              : 'invoke_workflow (POST /a2a/app/tasks/sendSubscribe)',
-          agentSpan: `invoke_agent: ${name.replace(/-/g, '_')}`,
-          llmModel: 'gemini-2.5-flash',
-          toolCalled: 'execute_tool: check_deployment_sizing',
-          durationMs: isDegraded ? 1380 : 560,
-          tokensUsed: 790,
-          status: isDegraded ? 'ERROR' : 'OK',
-        },
-      ],
-    };
-
-    if (existingIdx >= 0) {
-      gcpDeploymentsStore[existingIdx] = newDep;
-    } else {
-      gcpDeploymentsStore.unshift(newDep);
-    }
-
-    res.json({ deployment: newDep, deployments: gcpDeploymentsStore });
+  app.post('/api/gcp-deployments', (_req, res) => {
+    res.status(501).json({ error: 'Google Cloud provisioning is not connected. Use the generated commands in your own cloud project. Displayed fleet data is sample data.' });
   });
 
   app.get('/api/mcp', (_req, res) => {
@@ -191,7 +143,7 @@ async function startServer() {
   });
 
   app.post('/api/demo/run', (req, res) => {
-    const k = Number(req.body?.k ?? 2);
+    const k = Math.max(0, Math.min(3, Math.floor(Number(req.body?.k) || 0)));
     const mode =
       req.body?.mode === 'parallel' || req.body?.mode === 'sequential' || req.body?.mode === 'both'
         ? req.body.mode
@@ -260,71 +212,6 @@ async function startServer() {
       videoTranscript: typeof videoTranscript === 'string' ? videoTranscript : undefined,
       preferredSubstrate: preferredSubstrate === 'cx' ? 'cx' : 'oc',
     });
-
-    if (process.env.GEMINI_API_KEY) {
-      try {
-        const ai = new GoogleGenAI({
-          apiKey: process.env.GEMINI_API_KEY,
-          httpOptions: {
-            headers: {
-              'User-Agent': 'aistudio-build',
-            },
-          },
-        });
-
-        const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];
-        if (typeof videoBase64 === 'string' && videoBase64.length > 0) {
-          parts.push({
-            inlineData: {
-              mimeType: typeof videoMimeType === 'string' ? videoMimeType : 'video/mp4',
-              data: videoBase64,
-            },
-          });
-        }
-        parts.push({
-          text: `You are the Harness² Architect Agent. Analyze the provided video and/or step-by-step instructions and refine the summary, substrate rationale, and recursion rationale for building a validated agent harness.\n\nInstructions:\n${String(
-            rawInstructions ?? ''
-          )}\n\nVideo Transcript / Notes:\n${String(videoTranscript ?? '')}`,
-        });
-
-        const response = await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
-          contents: { parts },
-          config: {
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                refinedTitle: { type: Type.STRING },
-                refinedSummary: { type: Type.STRING },
-                substrateRationale: { type: Type.STRING },
-                recursionRationale: { type: Type.STRING },
-              },
-              required: [
-                'refinedTitle',
-                'refinedSummary',
-                'substrateRationale',
-                'recursionRationale',
-              ],
-            },
-          },
-        });
-
-        const rawText = response.text;
-        if (rawText) {
-          const parsed = JSON.parse(rawText.trim());
-          baseResult.title = parsed.refinedTitle || baseResult.title;
-          baseResult.summary = parsed.refinedSummary || baseResult.summary;
-          baseResult.workflowDecision.substrateRationale =
-            parsed.substrateRationale || baseResult.workflowDecision.substrateRationale;
-          baseResult.workflowDecision.recursionRationale =
-            parsed.recursionRationale || baseResult.workflowDecision.recursionRationale;
-          baseResult.synthesisEngine = 'gemini-3.8-flash';
-        }
-      } catch (err) {
-        console.warn('Fallback to deterministic architect synthesis:', (err as Error).message);
-      }
-    }
 
     res.json(baseResult);
   });
@@ -444,6 +331,8 @@ async function startServer() {
       profiles: harnessProfilesStore,
     });
   });
+
+  app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API endpoint' }));
 
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

@@ -1,3 +1,4 @@
+import { refineHarness } from './core/browserGemini';
 import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle,
@@ -202,6 +203,9 @@ const PRESET_TREES: Record<string, { label: string; substrate: 'oc' | 'cx'; tree
 };
 
 export default function App() {
+  const [geminiKey, setGeminiKey] = useState('');
+  const [geminiModel, setGeminiModel] = useState('gemini-2.5-flash');
+  const [aiStatus, setAiStatus] = useState('No key connected. Deterministic design is available.');
   const [activeTab, setActiveTab] = useState<ActiveTab>('architect');
 
   // Agent Harness Architect & Curriculum Builder State
@@ -496,76 +500,7 @@ export default function App() {
       cmekEnabled: overridePayload?.cmekEnabled ?? deployFormCmek,
     };
 
-    try {
-      const res = await fetch('/api/gcp-deployments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setGcpDeployments(data.deployments);
-        setSelectedGcpDepId(data.deployment.id);
-        setDeployActionStatus(`Deployed & verified ${data.deployment.name} (${data.deployment.target})`);
-        setTimeout(() => setDeployActionStatus(''), 3500);
-        return;
-      }
-    } catch {
-      // Fallback local update
-    }
-    const peakMiB = 512 + payload.concurrency * 220;
-    const isDegraded = peakMiB > payload.memoryGi * 1024 * 0.88;
-    const updated: ManagedAgentDeployment = {
-      id: `dep-${Date.now()}`,
-      name: payload.name,
-      target: payload.target,
-      region: payload.region,
-      project: payload.project,
-      status: isDegraded ? 'DEGRADED' : 'HEALTHY',
-      framework: 'google-adk',
-      registrationType: payload.target === 'agent_runtime' ? 'adk' : 'a2a',
-      resourceUri:
-        payload.target === 'agent_runtime'
-          ? `projects/189717904217/locations/${payload.region}/reasoningEngines/904182`
-          : `https://${payload.name}-189717904217.${payload.region}.run.app`,
-      endpointOrEngineId:
-        payload.target === 'agent_runtime'
-          ? 'reasoningEngines (:streamQuery)'
-          : '/a2a/app/.well-known/agent-card.json',
-      cpu: payload.cpu,
-      memoryGi: payload.memoryGi,
-      concurrency: payload.concurrency,
-      minInstances: payload.minInstances,
-      maxInstances: payload.maxInstances,
-      agentIdentity: payload.agentIdentity,
-      agentGatewayEgress:
-        payload.target === 'agent_runtime' && payload.agentGateway
-          ? `projects/${payload.project}/locations/${payload.region}/agentGateways/corp-egress-gw`
-          : null,
-      cmekEnabled: payload.cmekEnabled,
-      otelCaptureMode: 'NO_CONTENT',
-      bqAnalyticsDataset: `${payload.project}.agent_analytics`,
-      p95LatencyMs: isDegraded ? 1420 : 580,
-      errorRatePct: isDegraded ? 2.1 : 0.08,
-      evalPassRatePct: 96.8,
-      lastDeployedAt: new Date().toISOString(),
-      recentSpans: [
-        {
-          traceId: '5a89c10293e4f00192837465a1b2c3d4',
-          workflowSpan: 'invoke_workflow (streaming_agent_run_with_events)',
-          agentSpan: `invoke_agent: ${payload.name.replace(/-/g, '_')}`,
-          llmModel: 'gemini-2.5-flash',
-          toolCalled: 'execute_tool: check_deployment_sizing',
-          durationMs: 560,
-          tokensUsed: 790,
-          status: isDegraded ? 'ERROR' : 'OK',
-        },
-      ],
-    };
-    setGcpDeployments((prev) => [updated, ...prev.filter((d) => d.name !== updated.name)]);
-    setSelectedGcpDepId(updated.id);
-    setDeployActionStatus(`Updated ${updated.name} (${updated.target})`);
-    setTimeout(() => setDeployActionStatus(''), 3500);
+    setDeployActionStatus('Cloud provisioning is not connected. This is a planning workbench; copy the generated commands to deploy in your own cloud project.');
   };
 
   const handleSyncMcpToHarness = async (jsonStr: string) => {
@@ -861,41 +796,20 @@ export default function App() {
   const handleSynthesizeHarness = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setIsSynthesizingHarness(true);
+    const base = synthesizeHarnessFromInput({ title: archTitle, rawInstructions: archInstructions, videoTranscript: archVideoNotes, preferredSubstrate: archSubstrate });
     try {
-      const res = await fetch('/api/harness-architect/synthesize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: archTitle,
-          rawInstructions: archInstructions,
-          videoTranscript: archVideoNotes,
-          preferredSubstrate: archSubstrate,
-          videoBase64: uploadedVideoBase64 || undefined,
-          videoMimeType: uploadedVideoMime,
-        }),
-      });
-      if (res.ok) {
-        const data: HarnessArchitectSynthesisResult = await res.json();
-        setArchResult(data);
-        const firstFile = Object.keys(data.generatedTree)[0] ?? 'systemprompt.md';
-        setArchSelectedTreeFile(firstFile);
-        return;
-      }
-    } catch {
-      // Fallback to local deterministic architect
+      if (uploadedVideoBase64 && !geminiKey.trim()) throw new Error('Connect your Gemini key to analyze video.');
+      const result = geminiKey.trim()
+        ? await refineHarness(base, { key: geminiKey.trim(), model: geminiModel.trim(), instructions: archInstructions, notes: archVideoNotes, videoBase64: uploadedVideoBase64, videoMimeType: uploadedVideoMime })
+        : base;
+      setArchResult(result);
+      setArchSelectedTreeFile(Object.keys(result.generatedTree)[0] ?? 'systemprompt.md');
+      setAiStatus(geminiKey.trim() ? 'Gemini refinement completed. Review the generated harness before use.' : 'Deterministic design completed; no provider was called.');
+    } catch (err) {
+      setAiStatus(err instanceof Error ? err.message : 'Gemini request failed.');
     } finally {
       setIsSynthesizingHarness(false);
     }
-
-    const fallback = synthesizeHarnessFromInput({
-      title: archTitle,
-      rawInstructions: archInstructions,
-      videoTranscript: archVideoNotes,
-      preferredSubstrate: archSubstrate,
-    });
-    setArchResult(fallback);
-    const firstFile = Object.keys(fallback.generatedTree)[0] ?? 'systemprompt.md';
-    setArchSelectedTreeFile(firstFile);
   };
 
   const handleMountArchTreeIntoValidator = () => {
@@ -1088,37 +1002,8 @@ export default function App() {
     if (e) e.preventDefault();
     setIsRunningByoc(true);
     try {
-      const res = await fetch('/api/agent-connector/execute', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          language: byocLanguage,
-          code: byocCode,
-          inputJson: byocInputJson,
-          skillIds: byocBoundSkills,
-          targetHarnessPath: byocTargetPath,
-        }),
-      });
-      if (res.ok) {
-        const data: ByocExecutionResult = await res.json();
-        setByocResult(data);
-        return;
-      }
-    } catch {
-      // Fallback to local execution
-    } finally {
-      setIsRunningByoc(false);
-    }
-
-    const localRes = executeByocWithSkills({
-      code: byocCode,
-      language: byocLanguage,
-      inputJson: byocInputJson,
-      skillIds: byocBoundSkills,
-      targetHarnessPath: byocTargetPath,
-      customTree: editorTree,
-    });
-    setByocResult(localRes);
+      setByocResult(executeByocWithSkills({ code: byocCode, language: byocLanguage, inputJson: byocInputJson, skillIds: byocBoundSkills, targetHarnessPath: byocTargetPath, customTree: editorTree }));
+    } finally { setIsRunningByoc(false); }
   };
 
   const handleMountByocIntoHarness = () => {
@@ -1318,6 +1203,17 @@ export default function App() {
         </div>
       </header>
 
+      <section className="max-w-7xl w-full mx-auto px-6 pt-6 space-y-3" aria-label="Provider settings">
+        <h2 className="font-bold">Bring your own Gemini key</h2>
+        <p className="text-sm text-slate-300">Your key stays in page memory and is sent directly to Google. Reload or clear it to disconnect. Never paste secrets into harness files or code templates.</p>
+        <div className="flex flex-wrap gap-3">
+          <label>Gemini API key <input type="password" autoComplete="off" value={geminiKey} onChange={e => setGeminiKey(e.target.value)} className="bg-slate-900 border rounded p-2" /></label>
+          <label>Model <input value={geminiModel} onChange={e => setGeminiModel(e.target.value)} className="bg-slate-900 border rounded p-2" /></label>
+          <button onClick={() => { setGeminiKey(''); setAiStatus('Key cleared from page memory.'); }} className="border rounded p-2">Clear key</button>
+        </div>
+        <p role="status" className="text-sm text-amber-300">{aiStatus}</p>
+        <p className="text-sm text-slate-400">Cloud fleet and telemetry are examples; cloud provisioning is not connected. JavaScript BYOC runs as trusted code in this browser (not an isolated sandbox). Dart/Python runs are calculator previews, not runtime execution. Workspace tasks and imported profiles are saved; export editor changes to keep a copy.</p>
+      </section>
       {/* Main Content */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-8 space-y-8">
         {/* Active Harness Configuration (harness2.v1) Registry & Import Banner */}
@@ -3417,7 +3313,7 @@ export default function App() {
                       {selectedGcpDeployment.evalPassRatePct.toFixed(1)}%
                     </div>
                     <div className="text-[11px] text-slate-400">
-                      agents-cli eval run (24 scenarios)
+                      Sample evaluation data — not a live run
                     </div>
                   </div>
                   <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-1">
@@ -3435,7 +3331,7 @@ export default function App() {
                       {selectedGcpDeployment.otelCaptureMode}
                     </div>
                     <div className="text-[11px] text-emerald-400">
-                      GCS/BigQuery Hook: upload enabled
+                      Example configuration — no upload connected
                     </div>
                   </div>
                 </div>
@@ -3447,7 +3343,7 @@ export default function App() {
                     <div className="flex items-center justify-between">
                       <div>
                         <h2 className="text-sm font-bold text-white">
-                          Active Google Cloud Agent Deployments
+                          Example Google Cloud Agent Deployments
                         </h2>
                         <p className="text-xs text-slate-400">
                           Click a deployment to inspect its Cloud Trace spans &amp; sizing
@@ -3740,7 +3636,7 @@ export default function App() {
                           type="submit"
                           className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white cursor-pointer"
                         >
-                          Execute Deployment Update
+                          Cloud deployment unavailable
                         </button>
                       </div>
                     </form>

@@ -209,7 +209,7 @@ export interface HarnessArchitectSynthesisResult {
   experienceMarkdown: string;
   trainingScenarios: TrainingScenario[];
   supportRunbook: SupportRunbookItem[];
-  synthesisEngine: 'gemini-3.8-flash' | 'deterministic-architect';
+  synthesisEngine: string;
 }
 
 export interface ArchitectInputPreset {
